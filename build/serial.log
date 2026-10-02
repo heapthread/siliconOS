@@ -1,0 +1,19 @@
+
+silicon 0.1 booting
+memory: 511 MiB total, heap 500000..1ffe0000
+framebuffer 1024x768 pitch 4096 @ fd000000
+tsc: 4200 MHz
+mouse: vmmouse absolute, 4-byte packets
+ata: primary master, 131072 sectors (64 MiB)
+pci: 6 devices
+ata: bus master dma at io c100
+fs: loaded 22 nodes, 291512 bytes
+crypto selftest: sha256 ok, aes ok, x25519 ok
+pci: 6 devices
+rtl8139: io c000 irq 11 mac 52:54:0:12:34:56
+assets: 33 icons, 8 wallpapers
+dhcp: 10.0.2.15 gw 10.0.2.2 dns 10.0.2.3
+fs: wrote 16 of 570 sectors
+fs: synced 291512 bytes (ok)
+fs: wrote 571 of 571 sectors
+fs: synced 291852 bytes (ok)

@@ -1,0 +1,8 @@
+
+silicon 0.1 booting
+memory: 255 MiB total, heap 500000..ffe0000
+framebuffer 1024x768 pitch 4096 @ fd000000
+mouse: vmmouse absolute, 4-byte packets
+ata: primary master, 131072 sectors (64 MiB)
+fs: loaded 13 nodes, 3401 bytes
+assets: 26 icons, 8 wallpapers
