@@ -1023,6 +1023,8 @@ T1Font* t1_open(const u8* data, u32 len, u32 len1, u32 len2) {
         u32 p = (u32)(sp - P) + 6;
         int cnt;
         if (read_int(p, &cnt)) {
+            char arr[16];
+            read_tok(p, arr, sizeof(arr));                 // "array"
             for (;;) {
                 skip_ws(p);
                 if (p + 3 <= PN && !memcmp(P + p, "dup", 3)) {

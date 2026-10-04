@@ -92,7 +92,9 @@ const char* oname(Obj* o);                             // "" when not a name
 static inline bool is_dict(Obj* o) { return o && (o->type == O_DICT || o->type == O_STREAM); }
 static inline u32  alen(Obj* o) { return o && o->type == O_ARR ? o->arr.n : 0; }
 u8*   pdf_stream(PdfDoc* d, Obj* s, u32* len, char* image_filter);   // decoded bytes owned by the doc cache
-u8*   pdf_stream_copy(PdfDoc* d, Obj* s, u32* len);    // decoded bytes the caller frees
+u8*   pdf_stream_copy(PdfDoc* d, Obj* s, u32* len);
+u8*   pdf_stream_decode(PdfDoc* d, Obj* s, u32* len, char* image_filter);   // decoded bytes the caller frees, image filter name left in place
+u8*   pdf_apply_filters(PdfDoc* d, Obj* dict, u8* data, u32 len, u32* outlen, char* image_filter);   // consumes data    // decoded bytes the caller frees
 Obj*  parse_obj_at(PdfDoc* d, const u8* buf, u32 n, u32* pos, bool refs);   // one object; keywords come back as O_KEY
 Obj*  new_obj(PdfDoc* d, u8 type);
 void  render_cache_free(PdfDoc* d);

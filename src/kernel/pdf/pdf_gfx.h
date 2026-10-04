@@ -92,3 +92,6 @@ bool     shading_has_bbox(Shading* s, double* box);
 u32      shading_background(Shading* s, bool* has);
 // mesh shadings are drawn into a bitmap covering `area` first
 void     shading_prepare(Shading* s, IRect area);
+
+// ---- images (pdf_image.cpp); `inline_data` is non-null for inline images. fill_rgb colours stencil masks
+bool pdf_decode_image(PdfDoc* d, Obj* dict, const u8* inline_data, u32 inline_len, Obj* res, u32 fill_rgb, Image* out);

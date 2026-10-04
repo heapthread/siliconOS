@@ -731,12 +731,9 @@ static const char* canon_filter(const char* f) {
     return f;
 }
 
-static u8* decode_stream(PdfDoc* d, Obj* s, u32* outlen, char* imgf) {
+// runs the filter chain named in `s` (a stream or inline image dict) over data; consumes `data`
+u8* pdf_apply_filters(PdfDoc* d, Obj* s, u8* data, u32 len, u32* outlen, char* imgf) {
     if (imgf) imgf[0] = 0;
-    if (!s || s->type != O_STREAM || (u64)s->soff + s->slen > d->len) { *outlen = 0; return (u8*)kcalloc(1); }
-    u8* data = dup_bytes(d->data + s->soff, s->slen);
-    u32 len = s->slen;
-    if (d->crypt_method && s->num) data = pdf_decrypt_stream(d, data, &len, s->num, s->gen);
     Obj* F = dget(d, s, "Filter");
     Obj* DP = dget(d, s, "DecodeParms");
     if (!F) { F = dget(d, s, "F"); if (F && !(F->type == O_NAME || F->type == O_ARR)) F = nullptr; }
@@ -790,6 +787,17 @@ static u8* decode_stream(PdfDoc* d, Obj* s, u32* outlen, char* imgf) {
     *outlen = len;
     return data;
 }
+
+static u8* decode_stream(PdfDoc* d, Obj* s, u32* outlen, char* imgf) {
+    if (imgf) imgf[0] = 0;
+    if (!s || s->type != O_STREAM || (u64)s->soff + s->slen > d->len) { *outlen = 0; return (u8*)kcalloc(1); }
+    u8* data = dup_bytes(d->data + s->soff, s->slen);
+    u32 len = s->slen;
+    if (d->crypt_method && s->num) data = pdf_decrypt_stream(d, data, &len, s->num, s->gen);
+    return pdf_apply_filters(d, s, data, len, outlen, imgf);
+}
+
+u8* pdf_stream_decode(PdfDoc* d, Obj* s, u32* len, char* imgf) { return decode_stream(d, s, len, imgf); }
 
 u8* pdf_stream_copy(PdfDoc* d, Obj* s, u32* len) {
     char tmp[8];
