@@ -75,6 +75,7 @@ struct Canvas {
     int w = 0, h = 0, pitch = 0;     // pitch in pixels
     Rect clip{0, 0, 0, 0};
     int ox = 0, oy = 0;              // drawing origin offset
+    int emoji_px = 12;               // emoji sprite size inside text (12 or 16)
 
     void init(u32* p, int width, int height, int pitch_px);
     void set_clip(Rect r);           // r in canvas coordinates (origin applied)
@@ -131,3 +132,7 @@ void  image_free(Image& img);
 bool image_load(const u8* data, u32 len, Image& img);
 const char* image_format(const u8* data, u32 len);   // "png", "jpeg", ... or nullptr
 void image_shrink(Image& img, int maxw, int maxh);    // box filter, keeps the aspect ratio
+
+// whole-buffer inflate (imgdec.cpp): kmalloc'd result, nullptr on failure
+u8* zlib_decompress(const u8* in, u32 inlen, u32* outlen, u32 max_out);      // with the 2-byte zlib header
+u8* deflate_decompress(const u8* in, u32 inlen, u32* outlen, u32 max_out);   // raw deflate (zip)

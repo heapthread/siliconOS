@@ -75,6 +75,8 @@ struct TerminalApp : App, ShellHost {
             if (fs_lookup(arg)) open_path(arg);
             else if (!launch(arg)) s->outf("open: nothing called %s\n", arg);
         } else if (r == SR_WALLPAPER) ui_wallpaper_command(s, arg);
+        else if (r == SR_LOCK) ui_lock(false);
+        else if (r == SR_SLEEP) ui_lock(true);
         else if (r == SR_SETUP) s->out("the firmware setup takes over the whole screen: leave the desktop first,\nor reboot and press DEL\n");
     }
     bool host_is_ui() override { return true; }

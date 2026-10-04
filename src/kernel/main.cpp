@@ -9,6 +9,8 @@
 #include "ui/ui.h"
 #include "net/net.h"
 #include "firmware.h"
+#include "display.h"
+#include "ui/lockscreen.h"
 
 extern "C" char __kernel_end[];
 u64 mem_total_bytes = 0;
@@ -85,6 +87,8 @@ static const int HEADER_H = 22;
 struct TermHost : ShellHost {
     void shell_request(Shell* sh, ShellRequest r, const char* arg) override {
         if (r == SR_START_UI) want_ui = true;
+        else if (r == SR_LOCK) { greeter_run(false); con.dirty = true; }
+        else if (r == SR_SLEEP) { sleep_run(); lock_after_wake(); con.dirty = true; }
         else if (r == SR_SETUP) {
             firmware_setup();
             // the firmware may have changed how the terminal looks
@@ -136,14 +140,28 @@ static void draw_terminal() {
     fb_present();
 }
 
+static void term_screen_changed() {
+    int cols = (fb.width - 16) / con.cell_w(), rows = (fb.height - HEADER_H - 8) / con.cell_h();
+    con.resize(cols, rows);
+    con.dirty = true;
+}
+
 static void terminal_loop() {
-    u64 last_draw = 0;
+    display_on_change(term_screen_changed);
+    u64 last_draw = 0, last_input = ticks();
     int last_min = -1;
     for (;;) {
         KeyEvent e;
         bool any = false;
-        while (kbd_poll(e)) { shell.on_key(e); any = true; }
+        while (kbd_poll(e)) { shell.on_key(e); any = true; last_input = ticks(); }
+        if (settings.sleep_min && ticks() - last_input > (u64)settings.sleep_min * 60000 && !shell.busy()) {
+            sleep_run();
+            lock_after_wake();
+            con.dirty = true;
+            last_input = ticks();
+        }
         net_poll();
+        display_poll();
         shell.tick();
         fs_tick();
         if (want_ui) {
@@ -175,10 +193,13 @@ extern "C" void kmain(BootInfo* bi) {
     klog("framebuffer %ux%u pitch %u @ %lx\n", bi->fb_width, bi->fb_height, bi->fb_pitch, bi->fb_addr);
     pit_init(1000);
     sti();
+    bridge_init();                              // host helper: window size, clipboard
+    display_init();                             // follows the window size when the VM allows it
     kbd_init();
     mouse_init(fb.width, fb.height);
     fs_init();
     settings_load();
+    display_refresh_from_settings();
     int boot_target = firmware_boot();          // POST, setup (DEL/F2), boot menu (F12)
     splash("waking up the silicon", 30);
     splash("bringing up the network", 50);
@@ -200,6 +221,7 @@ extern "C" void kmain(BootInfo* bi) {
     shell.banner();
     shell.run_line("fetch");
     shell.start_prompt();
+    if (settings.greeter) greeter_run(true);
     if (boot_target == 1) want_ui = true;
     terminal_loop();
 }

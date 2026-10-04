@@ -127,4 +127,11 @@ bool mouse_update(MouseState& st) {
 }
 
 bool mouse_absolute() { return vmmouse; }
+void mouse_set_bounds(int w, int h) {
+    u64 f = irq_save();
+    sw = w; sh = h;
+    mx = clamp((int)mx, 0, w - 1);
+    my = clamp((int)my, 0, h - 1);
+    irq_restore(f);
+}
 void mouse_warp(int x, int y) { mx = x; my = y; }

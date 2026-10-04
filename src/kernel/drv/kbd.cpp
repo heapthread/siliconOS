@@ -100,6 +100,10 @@ void kbd_init() {
     irq_unmask(1);
 }
 
+bool kbd_shift_down() { return shift_l || shift_r; }
+bool kbd_ctrl_down() { return ctrl; }
+bool kbd_alt_down() { return alt; }
+
 bool kbd_poll(KeyEvent& ev) {
     u64 f = irq_save();
     if (q_tail == q_head) { irq_restore(f); return false; }

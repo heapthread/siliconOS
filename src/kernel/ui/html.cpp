@@ -3,6 +3,7 @@
 #include "html.h"
 #include "css.h"
 #include "../net/net.h"
+#include "../text.h"
 
 static const int LINE_H = 16;          // per text scale
 static const int MARGIN = 14;
@@ -38,6 +39,11 @@ static const Entity entities[] = {
 // map a unicode code point onto silicon's ASCII-ish font
 static void put_codepoint(u32 cp, char* out, int& o, int n) {
     auto put = [&](const char* s) { while (*s && o < n - 1) out[o++] = *s++; };
+    if (cp >= 0x203C) {                                  // emoji get a sprite (two bytes), modifiers vanish
+        int e = emoji_index(cp);
+        if (e < 0) return;
+        if (e > 0 && o + 2 < n - 1) { emoji_to_bytes(e, out + o); o += 2; return; }
+    }
     if (cp < 128) { if (o < n - 1) out[o++] = (char)cp; return; }
     if (cp == 0xA0 || (cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F) { put(" "); return; }
     if (cp == 0x2018 || cp == 0x2019 || cp == 0x201A || cp == 0x2032) { put("'"); return; }
@@ -109,7 +115,6 @@ static int decode(const char* s, int len, char* out, int n, bool pre) {
             if (i + extra >= len) { i++; continue; }          // truncated sequence
             for (int k = 1; k <= extra && i + k < len; k++) cp = (cp << 6) | ((u8)s[i + k] & 0x3F);
             i += extra + 1;
-            if (cp >= 0x1F000) continue;                              // emoji: no glyphs
             put_codepoint(cp, out, o, n);
             continue;
         }

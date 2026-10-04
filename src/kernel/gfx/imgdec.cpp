@@ -197,6 +197,38 @@ static bool inflate(Inflate& s) {
     return ok || s.outlen > 0;
 }
 
+// whole-buffer inflate for other modules (PDF streams, zip files): the result is kmalloc'd, the output
+// grows (by retrying with a bigger buffer) up to max_out bytes
+static u8* inflate_all(const u8* in, u32 inlen, u32* outlen, u32 max_out) {
+    u32 cap = max(inlen * 4, 4096u);
+    for (;;) {
+        cap = min(cap, max_out);
+        u8* out = (u8*)kmalloc_try(cap + 16);
+        if (!out) return nullptr;
+        Inflate s;
+        memset(&s, 0, sizeof(s));
+        s.in = in;
+        s.inlen = inlen;
+        s.out = out;
+        s.outcap = cap;
+        bool ok = inflate(s);
+        if (s.full && cap < max_out) { kfree(out); cap *= 2; continue; }
+        if (!ok && !s.outlen) { kfree(out); return nullptr; }
+        *outlen = s.outlen;
+        return out;
+    }
+}
+
+u8* deflate_decompress(const u8* in, u32 inlen, u32* outlen, u32 max_out) { return inflate_all(in, inlen, outlen, max_out); }
+
+u8* zlib_decompress(const u8* in, u32 inlen, u32* outlen, u32 max_out) {
+    if (inlen < 2) return nullptr;
+    u32 skip = 2;
+    if (in[1] & 0x20) skip += 4;                    // preset dictionary id
+    if ((in[0] & 15) != 8 || inlen <= skip) return nullptr;
+    return inflate_all(in + skip, inlen - skip, outlen, max_out);
+}
+
 // ================================================================ PNG
 static int paeth(int a, int b, int c) {
     int p = a + b - c;

@@ -667,6 +667,8 @@ static void about(Shell& sh, int, char**) {
 }
 
 static void setup(Shell& sh, int, char**) { sh.host->shell_request(&sh, SR_SETUP, nullptr); }
+static void lock_cmd(Shell& sh, int, char**) { sh.host->shell_request(&sh, SR_LOCK, nullptr); }
+static void suspend_cmd(Shell& sh, int, char**) { sh.host->shell_request(&sh, SR_SLEEP, nullptr); }
 static void reboot(Shell& sh, int, char**) { sh.out("rebooting...\n"); fs_sync(); sleep_ms(200); power_reboot(); }
 static void shutdown(Shell& sh, int, char**) { sh.out("saving and powering off...\n"); fs_sync(); sleep_ms(200); power_off(); }
 static void sync(Shell& sh, int, char**) { sh.out(fs_sync() ? "synced\n" : "nothing to sync (RAM only)\n"); }
@@ -987,6 +989,8 @@ const Command commands[] = {
     {"take", "<dir>", "mkdir + cd (zsh)", ShellCommands::take},
     {"reboot", "", "restart the machine", ShellCommands::reboot},
     {"setup", "", "open the firmware setup utility", ShellCommands::setup},
+    {"lock", "", "lock the screen (the greeter)", ShellCommands::lock_cmd},
+    {"suspend", "", "put the screen to sleep", ShellCommands::suspend_cmd},
     {"shutdown", "", "power off", ShellCommands::shutdown},
     {"fsreset", "--yes", "erase all files", ShellCommands::fsreset},
 };

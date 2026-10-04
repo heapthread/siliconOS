@@ -179,6 +179,8 @@ static void build_bar_menus() {
         .add("Monitor", SYS_MONITOR)
         .add("Screensaver", SYS_SAVER)
         .sep()
+        .add("Lock screen", SYS_LOCK, "ctrl+alt+l")
+        .add("Sleep", SYS_SLEEP)
         .add("Terminal mode", SYS_TERMINAL_MODE)
         .sep()
         .add("Restart" G_ELLIP, SYS_RESTART)
@@ -509,11 +511,36 @@ void draw_toasts(Canvas& c) {
 
 // ================================================================ desktop icons (contents of /home)
 int desk_sel = -1;
+static u8 desk_mask[128];
 
 static Rect desk_cell(int i) {
     int rows = max(1, (SH - TOPBAR_H - 130) / 86);
     int col = i / rows, row = i % rows;
     return {14 + col * 90, TOPBAR_H + 14 + row * 86, 86, 84};
+}
+
+bool desk_selected(int i) { return i >= 0 && i < 128 && desk_mask[i]; }
+void desk_clear_sel() { memset(desk_mask, 0, sizeof(desk_mask)); desk_sel = -1; damage(desk_area()); }
+int desk_sel_count() { int n = 0; for (int i = 0; i < 128; i++) n += desk_mask[i]; return n; }
+void desk_save_sel(u8* out) { memcpy(out, desk_mask, 128); }
+Rect desk_area() {
+    FsNode* home = fs_home();
+    int n = home ? home->children.len : 0;
+    int rows = max(1, (SH - TOPBAR_H - 130) / 86);
+    int cols = max(1, (n + rows - 1) / rows);
+    return {0, TOPBAR_H, 14 + cols * 90 + 4, SH - TOPBAR_H};
+}
+void desk_select_rect(Rect r, const u8* base) {
+    FsNode* home = fs_home();
+    int n = home ? min(home->children.len, 128) : 0;
+    bool changed = false;
+    for (int i = 0; i < n; i++) {
+        Rect c = desk_cell(i);
+        Rect icon_box = {c.x + (c.w - 64) / 2 - 3, c.y - 3, 70, 84};
+        u8 v = base[i] | (u8)!icon_box.intersect(r).empty();
+        if (v != desk_mask[i]) { desk_mask[i] = v; changed = true; }
+    }
+    if (changed) damage(desk_area());
 }
 
 void draw_desktop_icons(Canvas& c) {
@@ -529,7 +556,7 @@ void draw_desktop_icons(Canvas& c) {
                        : str_icontains(n->name, ".htm") ? "browser" : "text_file";
         Image& img = icon(ic)->big;
         int ix = r.x + (r.w - 64) / 2;
-        bool sel = i == desk_sel;
+        bool sel = desk_selected(i);
         bool hov = !sel && r.contains(ui_mouse_x, ui_mouse_y) && !wm_focused_covers(ui_mouse_x, ui_mouse_y);
         if (sel) c.fill_alpha(ix - 3, r.y - 3, 70, 70, accent(), 110);
         else if (hov) c.fill_alpha(ix - 3, r.y - 3, 70, 70, th::white, 40);
@@ -577,9 +604,11 @@ static void desk_menu_fn(void*, int cmd) {
 }
 
 void desk_click(int i, int button, bool dbl, int mx, int my) {
+    if (kbd_ctrl_down() && button == 1) { if (i < 128) desk_mask[i] ^= 1; }
+    else if (!desk_selected(i) || button == 1) { memset(desk_mask, 0, sizeof(desk_mask)); if (i < 128) desk_mask[i] = 1; }
     desk_sel = i;
     desk_menu_node = fs_home()->children[i];
-    damage({0, TOPBAR_H, 400, SH - TOPBAR_H});
+    damage(desk_area());
     if (dbl && button == 1) { char p[256]; fs_path(desk_menu_node, p, sizeof(p)); open_path(p); }
     else if (button == 2) {
         Menu m;
@@ -600,11 +629,22 @@ void desk_key(const KeyEvent& e) {
     FsNode* home = fs_home();
     int n = home ? home->children.len : 0;
     if (!n) return;
-    damage({0, TOPBAR_H, 400, SH - TOPBAR_H});
-    if (e.key == K_DOWN || e.key == K_RIGHT) desk_sel = (desk_sel + 1) % n;
-    else if (e.key == K_UP || e.key == K_LEFT) desk_sel = (desk_sel + n - 1) % n;
+    damage(desk_area());
+    auto single = [&](int i) { memset(desk_mask, 0, sizeof(desk_mask)); desk_sel = i; if (i >= 0 && i < 128) desk_mask[i] = 1; };
+    if (e.ctrl && e.key == 'a') { for (int i = 0; i < n && i < 128; i++) desk_mask[i] = 1; if (desk_sel < 0) desk_sel = 0; }
+    else if (e.key == K_DOWN || e.key == K_RIGHT) single((desk_sel + 1) % n);
+    else if (e.key == K_UP || e.key == K_LEFT) single((desk_sel + n - 1) % n);
     else if (e.key == K_ENTER && desk_sel >= 0) { char p[256]; fs_path(home->children[desk_sel], p, sizeof(p)); open_path(p); }
-    else if (e.key == K_DELETE && desk_sel >= 0) { fs_trash(home->children[desk_sel]); desk_sel = -1; }
+    else if (e.key == K_DELETE && desk_sel >= 0) {
+        // trash every selected icon (from the end, so indexes stay valid)
+        Vec<FsNode*> doomed;
+        for (int i = 0; i < n && i < 128; i++) if (desk_mask[i]) doomed.push(home->children[i]);
+        for (int i = 0; i < doomed.len; i++) fs_trash(doomed[i]);
+        if (doomed.len > 1) { char b[40]; snprintf(b, sizeof(b), "%d items", doomed.len); ui_notify("Moved to Trash", b, "trash"); }
+        doomed.free();
+        memset(desk_mask, 0, sizeof(desk_mask));
+        desk_sel = -1;
+    } else if (e.key == K_ESC) { memset(desk_mask, 0, sizeof(desk_mask)); desk_sel = -1; }
 }
 
 // ================================================================ system commands
@@ -617,6 +657,8 @@ void sys_command(int cmd) {
     case SYS_LAUNCHER: launcher_show(); break;
     case SYS_OVERVIEW: overview_toggle(); break;
     case SYS_SAVER: saver_start(); break;
+    case SYS_LOCK: ui_lock(false); break;
+    case SYS_SLEEP: ui_lock(true); break;
     case SYS_MONITOR: launch("monitor"); break;
     case SYS_BROWSER: launch("browser"); break;
     case SYS_TERMINAL_MODE: desk_running = false; break;

@@ -1,5 +1,6 @@
 // silicon - 2D drawing primitives
 #include "gfx.h"
+#include "../text.h"
 
 const u8 font_rows[256][12] = {
 #include "font_data.inc"
@@ -223,6 +224,16 @@ int Canvas::text_n(int x, int y, const char* s, int n, u32 col, int scale, bool 
     int x0 = x;
     for (int i = 0; i < n && s[i]; i++) {
         if (s[i] == '\n') { x = x0; y += FONT_H * scale; continue; }
+        if (is_emoji_lead((u8)s[i]) && i + 1 < n && s[i + 1]) {
+            if (const Image* e = emoji_sprite(emoji_from_bytes((u8)s[i], (u8)s[i + 1]), emoji_px)) {
+                int size = emoji_px * scale, ex = x + (2 * FONT_W * scale - size) / 2, ey = y - (emoji_px - FONT_H) * scale / 2;
+                if (scale == 1) blit(*e, ex, ey);
+                else blit_scaled(*e, ex, ey, size, size);
+            }
+            x += 2 * FONT_W * scale;
+            i++;
+            continue;
+        }
         x += draw_char(x, y, (u8)s[i], col, scale, bold);
     }
     return x - x0;

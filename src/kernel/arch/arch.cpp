@@ -167,6 +167,16 @@ void pit_init(u32 hz) {
     irq_unmask(0);
 }
 
+u64 ticks_us() { return tsc_per_ms ? (rdtsc() - tsc0) * 1000 / tsc_per_ms : tick_ms * 1000; }
+
+// busy-wait a short while (frame pacing): spins on the TSC and counts as idle for the cpu graph
+void cpu_spin_us(u32 us) {
+    if (!tsc_per_ms) { cpu_idle(); return; }
+    u64 a = rdtsc(), end = a + (u64)us * tsc_per_ms / 1000;
+    while (rdtsc() < end) __asm__ volatile("pause");
+    idle_tsc += rdtsc() - a;
+}
+
 u32 cpu_mhz() { return (u32)(tsc_per_ms / 1000); }
 
 u64 ticks() { return tsc_per_ms ? (rdtsc() - tsc0) / tsc_per_ms : tick_ms; }

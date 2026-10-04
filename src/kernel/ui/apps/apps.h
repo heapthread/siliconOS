@@ -26,6 +26,7 @@ App* new_breakout(const char* arg);
 App* new_flappy(const char* arg);
 App* new_photos(const char* arg);
 App* new_piano(const char* arg);
+App* new_emoji(const char* arg);
 
 bool is_image_name(const char* name);   // .png .jpg .gif .bmp (photos.cpp)
 

@@ -14,6 +14,16 @@ extern Framebuffer fb;
 void fb_init(BootInfo* bi);
 void fb_present();
 void fb_present_rect(Rect r);
+bool fb_can_resize();                          // the display device supports runtime mode changes
+void fb_limit_mode(int* w, int* h);            // clamp a wished mode to what silicon supports
+bool fb_set_mode(int w, int h);                // switch resolution (reallocates the back buffer)
+bool fb_edid_mode(int* w, int* h, int* hz);    // the monitor's preferred mode (follows the QEMU window)
+
+// ---------------------------------------------------------------- host bridge (COM2)
+void bridge_init();
+void bridge_poll();                              // parse what the host sent
+bool bridge_linked();                            // the helper on the host has talked to us
+void bridge_send_clip(const char* text, u32 len);
 
 // ---------------------------------------------------------------- keyboard
 enum Key : u16 {
@@ -31,6 +41,9 @@ struct KeyEvent {
 };
 void kbd_init();
 bool kbd_poll(KeyEvent& ev);
+bool kbd_shift_down();                   // live modifier state (for mouse handlers)
+bool kbd_ctrl_down();
+bool kbd_alt_down();
 
 // ---------------------------------------------------------------- mouse
 struct MouseState {
@@ -42,6 +55,7 @@ void mouse_init(int screen_w, int screen_h);
 bool mouse_update(MouseState& st);   // true if anything changed
 bool mouse_absolute();               // vmmouse active (no grab needed)
 void mouse_warp(int x, int y);
+void mouse_set_bounds(int w, int h);   // screen size changed
 
 // ---------------------------------------------------------------- rtc
 struct DateTime { int year, month, day, hour, minute, second, weekday; };

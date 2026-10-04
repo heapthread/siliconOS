@@ -1,6 +1,8 @@
 // silicon - decoded icons and wallpapers
 #include "wm.h"
 
+void emoji_install_sheet(const Image& sheet);          // text.cpp
+
 struct AssetEntry { const char* name; const u8* data; u64 len; };
 extern "C" AssetEntry asset_table[];
 extern "C" u64 asset_count;
@@ -43,6 +45,9 @@ void ui_preload() {
             ic->mid = downscale(img, 2);
             ic->small = downscale(img, 4);
             icons.push(ic);
+        } else if (!strcmp(e.name, "emoji/sheet")) {
+            emoji_install_sheet(img);
+            image_free(img);
         } else if (str_starts(e.name, "wall/")) {
             Wallpaper* w = new Wallpaper();
             w->name = e.name + 5;

@@ -18,6 +18,12 @@ struct Settings {
     int  boot_target;        // 0 terminal, 1 desktop
     bool net_enabled;
     bool fast_boot;
+    int  fps_limit;          // 0 = the monitor's refresh rate, else a frame cap in Hz
+    int  res_w, res_h;       // 0 = follow the window size
+    bool greeter;            // ask for the user's password at start-up
+    char pass[72];           // salted sha256 of the password ("" = none)
+    int  sleep_min;          // idle minutes before the screen sleeps (0 = never)
+    int  saver_min;          // idle minutes before the screensaver (0 = never)
 };
 extern Settings settings;
 extern const u32 accent_colors[];

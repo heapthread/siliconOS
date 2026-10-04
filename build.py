@@ -205,28 +205,93 @@ def audio_driver():
     return "none"
 
 
+def host_display():
+    """(width, height, refresh Hz) of the primary monitor; sensible defaults off Windows."""
+    if os.name != "nt":
+        return 1920, 1080, 60
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class DEVMODE(ctypes.Structure):
+            _fields_ = [("dmDeviceName", ctypes.c_wchar * 32), ("dmSpecVersion", wintypes.WORD),
+                        ("dmDriverVersion", wintypes.WORD), ("dmSize", wintypes.WORD), ("dmDriverExtra", wintypes.WORD),
+                        ("dmFields", wintypes.DWORD), ("dmPositionX", ctypes.c_long), ("dmPositionY", ctypes.c_long),
+                        ("dmDisplayOrientation", wintypes.DWORD), ("dmDisplayFixedOutput", wintypes.DWORD),
+                        ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short), ("dmYResolution", ctypes.c_short),
+                        ("dmTTOption", ctypes.c_short), ("dmCollate", ctypes.c_short), ("dmFormName", ctypes.c_wchar * 32),
+                        ("dmLogPixels", wintypes.WORD), ("dmBitsPerPel", wintypes.DWORD), ("dmPelsWidth", wintypes.DWORD),
+                        ("dmPelsHeight", wintypes.DWORD), ("dmDisplayFlags", wintypes.DWORD),
+                        ("dmDisplayFrequency", wintypes.DWORD), ("dmICMMethod", wintypes.DWORD),
+                        ("dmICMIntent", wintypes.DWORD), ("dmMediaType", wintypes.DWORD), ("dmDitherType", wintypes.DWORD),
+                        ("dmReserved1", wintypes.DWORD), ("dmReserved2", wintypes.DWORD),
+                        ("dmPanningWidth", wintypes.DWORD), ("dmPanningHeight", wintypes.DWORD)]
+
+        dm = DEVMODE()
+        dm.dmSize = ctypes.sizeof(DEVMODE)
+        if ctypes.windll.user32.EnumDisplaySettingsW(None, -1, ctypes.byref(dm)):
+            return int(dm.dmPelsWidth), int(dm.dmPelsHeight), int(dm.dmDisplayFrequency) or 60
+    except Exception:
+        pass
+    return 1920, 1080, 60
+
+
+def start_size(hw, hh):
+    """The window the VM opens with: about 3/4 of the monitor's height, 16:9."""
+    h = int(hh * 0.75) & ~1
+    w = int(h * 16 / 9) & ~7
+    w = min(w, int(hw * 0.9) & ~7)
+    return max(w, 1024), max(h, 576)
+
+
+BRIDGE_PORT = int(os.environ.get("SILICON_BRIDGE_PORT", "4446"))
+
+
 def qemu_cmd(headless=False):
     audio = "none" if headless else audio_driver()
     # hardware virtualization when available (WHPX on Windows, KVM/HVF elsewhere), else TCG
     accel = os.environ.get("SILICON_ACCEL", "whpx:tcg" if os.name == "nt" else "kvm:hvf:tcg")
+    def vga_device(headless):
+        # the monitor's real refresh rate goes into the virtual EDID, and so does the window size
+        hw, hh, hz = host_display()
+        w, h = (1024, 768) if headless else start_size(hw, hh)
+        hz = int(os.environ.get("SILICON_HZ", hz))
+        return f"VGA,vgamem_mb=64,xres={w},yres={h},refresh_rate={hz * 1000}"
+
     cmd = [QEMU, "-name", "silicon", "-m", "512M"]
     for a in accel.split(":"):
         cmd += ["-accel", a]
     cmd += [
            "-drive", f"file={IMG},format=raw,if=ide,index=0",
-           "-vga", "std", "-rtc", "base=localtime",
+           "-vga", "none", "-device", vga_device(headless), "-rtc", "base=localtime",
            "-netdev", "user,id=net0", "-device", "rtl8139,netdev=net0",
            "-serial", "file:" + os.path.join(BUILD, "serial.log"),
+           "-chardev", f"socket,id=bridge,host=127.0.0.1,port={BRIDGE_PORT},server=on,wait=off",
+           "-serial", "chardev:bridge",
            "-audiodev", f"{audio},id=snd0",
            "-machine", "pc,pcspk-audiodev=snd0"]
-    if not headless and os.name == "nt" and "whpx" in accel:
-        # QEMU's GTK window starves a WHPX guest (each port access can stall ~100 ms); SDL doesn't
-        cmd += ["-display", "sdl"]
+    if not headless:
+        disp = os.environ.get("SILICON_DISPLAY", "sdl,gl=off" if os.name == "nt" and "whpx" in accel else "")
+        if disp:
+            cmd += ["-display", disp]
     if headless:
         # the test harness injects relative PS/2 motion, so turn the absolute vmmouse off
         cmd[cmd.index("pc,pcspk-audiodev=snd0")] = "pc,pcspk-audiodev=snd0,vmport=off"
         cmd += ["-display", "none", "-monitor", "tcp:127.0.0.1:4444,server,nowait"]
     return cmd
+
+
+def run_with_bridge(cmd):
+    """Start QEMU and the host helper that follows the window size and syncs the clipboard."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
+    import bridge
+    proc = subprocess.Popen(cmd)
+    b = bridge.Bridge(BRIDGE_PORT, proc.pid, host_display()[2])
+    b.start()
+    try:
+        proc.wait()
+    finally:
+        b.stop()
 
 
 def main():
@@ -242,7 +307,7 @@ def main():
         if "--headless" in args:
             subprocess.Popen(cmd)
         else:
-            subprocess.run(cmd)
+            run_with_bridge(cmd)
 
 
 if __name__ == "__main__":

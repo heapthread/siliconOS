@@ -6,6 +6,7 @@
 #include "../fs/fs.h"
 #include "../settings.h"
 #include "ui.h"
+#include "../clipboard.h"
 
 // ---------------------------------------------------------------- theme
 namespace th {
@@ -114,6 +115,10 @@ public:
     // modal helpers drawn over the client area
     void ask(const char* msg, const char* b1, const char* b2, const char* b3, void (*cb)(App*, int));
     void prompt(const char* msg, const char* initial, void (*cb)(App*, const char*));
+    // a file chooser over the window: exts is a comma list ("txt,md", "" = everything); save mode lets the
+    // user type a new name. The callback gets the full path.
+    void pick_file(const char* title, const char* dir, const char* exts, bool save, const char* default_name,
+                   void (*cb)(App*, const char* path));
     void info(const char* msg);
     struct Dialog* dialog = nullptr;
 
@@ -172,6 +177,7 @@ void draw_button(Canvas& c, int x, int y, int w, int h, const char* label, bool 
 void draw_checkbox(Canvas& c, int x, int y, const char* label, bool on);
 void draw_scrollbar(Canvas& c, int x, int y, int h, int total, int visible, int offset);
 void draw_panel(Canvas& c, int x, int y, int w, int h, const char* title = nullptr);
+void draw_marquee(Canvas& c, Rect r);                       // translucent selection rectangle
 void draw_progress(Canvas& c, int x, int y, int w, int h, int pct, u32 color);
 void draw_icon_label(Canvas& c, Icon* ic, int x, int y, int cell_w, const char* label, bool selected, bool small);
 extern int ui_mouse_x, ui_mouse_y;   // screen coords
@@ -181,10 +187,20 @@ bool hover_in(Window* w, int x, int y, int ww, int hh);   // client-relative hit
 struct TextField {
     char text[128];
     int  len = 0, cur = 0;
+    int  anchor = -1;                  // selection runs between anchor and cur (-1 = none)
+    int  scroll = 0;                   // first visible character
     bool focused = false;
-    void set(const char* s) { strlcpy(text, s, sizeof(text)); len = cur = (int)strlen(text); }
+    bool password = false;             // draw bullets
+    void set(const char* s) { strlcpy(text, s, sizeof(text)); len = cur = (int)strlen(text); anchor = -1; scroll = 0; }
+    void select_all() { anchor = 0; cur = len; }
+    bool has_sel() const { return anchor >= 0 && anchor != cur; }
     bool on_key(const KeyEvent& e);    // true if consumed; Enter is not consumed
     void draw(Canvas& c, int x, int y, int w);
+    void click(int rel_x, int w, bool shift = false);     // rel_x: pixels from the field's left edge
+    void drag(int rel_x, int w);
+    void insert(const char* s, int n);
+    void erase_sel();
+    void copy_sel();
 };
 
 // dialogs (widgets.cpp)

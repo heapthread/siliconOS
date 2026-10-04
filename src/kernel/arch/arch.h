@@ -18,6 +18,8 @@ void irq_unmask(int irq);
 void pit_init(u32 hz);
 u64  idle_ticks();                    // ms spent halted (for the cpu graph)
 void cpu_idle();                      // hlt and account idle time
+void cpu_spin_us(u32 us);               // spin for about this long
+u64  ticks_us();                      // microseconds since boot
 void cpu_rest();                      // spin ~1 ms (no hlt oversleep) and account idle time
 u32  cpu_mhz();                       // measured TSC rate
 const char* cpu_vendor();

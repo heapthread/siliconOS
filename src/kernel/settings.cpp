@@ -26,6 +26,12 @@ static void defaults() {
     settings.boot_target = 0;
     settings.net_enabled = true;
     settings.fast_boot = false;
+    settings.fps_limit = 0;
+    settings.res_w = settings.res_h = 0;
+    settings.greeter = true;
+    settings.pass[0] = 0;
+    settings.sleep_min = 15;
+    settings.saver_min = 5;
 }
 
 static u32 gen = 0;
@@ -36,13 +42,13 @@ void settings_load() {
     FsNode* f = fs_lookup("/system/settings");
     if (!f) return;
     const char* p = fs_read_text(f);
-    char key[32], val[64];
+    char key[32], val[128];
     while (*p) {
         int k = 0, v = 0;
         while (*p && *p != '=' && *p != '\n') { if (k < 31) key[k++] = *p; p++; }
         key[k] = 0;
         if (*p == '=') p++;
-        while (*p && *p != '\n') { if (v < 63) val[v++] = *p; p++; }
+        while (*p && *p != '\n') { if (v < 127) val[v++] = *p; p++; }
         val[v] = 0;
         if (*p == '\n') p++;
         if (!strcmp(key, "user")) strlcpy(settings.user, val, sizeof(settings.user));
@@ -60,18 +66,28 @@ void settings_load() {
         else if (!strcmp(key, "boot_target")) settings.boot_target = atoi(val);
         else if (!strcmp(key, "net_enabled")) settings.net_enabled = atoi(val);
         else if (!strcmp(key, "fast_boot")) settings.fast_boot = atoi(val);
+        else if (!strcmp(key, "fps_limit")) settings.fps_limit = clamp(atoi(val), 0, 1000);
+        else if (!strcmp(key, "res_w")) settings.res_w = atoi(val);
+        else if (!strcmp(key, "res_h")) settings.res_h = atoi(val);
+        else if (!strcmp(key, "greeter")) settings.greeter = atoi(val);
+        else if (!strcmp(key, "pass")) strlcpy(settings.pass, val, sizeof(settings.pass));
+        else if (!strcmp(key, "sleep_min")) settings.sleep_min = clamp(atoi(val), 0, 600);
+        else if (!strcmp(key, "saver_min")) settings.saver_min = clamp(atoi(val), 0, 600);
     }
 }
 
 void settings_save() {
     gen++;
-    char b[768];
+    char b[1024];
     snprintf(b, sizeof(b),
              "user=%s\nhostname=%s\nwallpaper=%d\naccent=%d\nterm_theme=%d\nterm_scale=%d\n"
              "clock24=%d\nshow_seconds=%d\ndock_magnify=%d\nsounds=%d\nshow_fps=%d\nshell=%s\n"
-             "boot_target=%d\nnet_enabled=%d\nfast_boot=%d\n",
+             "boot_target=%d\nnet_enabled=%d\nfast_boot=%d\nfps_limit=%d\nres_w=%d\nres_h=%d\ngreeter=%d\npass=%s\n"
+             "sleep_min=%d\nsaver_min=%d\n",
              settings.user, settings.hostname, settings.wallpaper, settings.accent, settings.term_theme,
              settings.term_scale, settings.clock24, settings.show_seconds, settings.dock_magnify, settings.sounds,
-             settings.show_fps, settings.shell, settings.boot_target, settings.net_enabled, settings.fast_boot);
+             settings.show_fps, settings.shell, settings.boot_target, settings.net_enabled, settings.fast_boot,
+             settings.fps_limit, settings.res_w, settings.res_h, settings.greeter, settings.pass, settings.sleep_min,
+             settings.saver_min);
     fs_write_text("/system/settings", b);
 }

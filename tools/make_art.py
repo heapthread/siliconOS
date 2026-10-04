@@ -543,6 +543,8 @@ def build_wallpapers():
 
 
 def main():
+    import make_emoji
+    make_emoji.main()
     stamp = os.path.join(OUT, ".stamp")
     me = os.path.abspath(__file__)
     if os.path.exists(stamp) and os.path.getmtime(stamp) >= os.path.getmtime(me):

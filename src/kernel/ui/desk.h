@@ -100,7 +100,14 @@ Rect toast_area();
 bool toasts_active();
 void draw_toasts(Canvas& c);
 
-extern int desk_sel;
+extern int desk_sel;                    // the icon last clicked (-1 = none)
+bool desk_selected(int i);
+void desk_clear_sel();
+int  desk_sel_count();
+void desk_select_rect(Rect r, const u8* base);       // select icons touching r, on top of the saved base selection
+void desk_save_sel(u8* out);                         // 128-byte copy of the selection mask
+Rect desk_area();                                    // everything the icon grid can cover
+void draw_desktop_marquee(Canvas& c);
 bool wm_focused_covers(int x, int y);
 int  desk_hit(int x, int y);
 void draw_desktop_icons(Canvas& c);
@@ -115,8 +122,9 @@ enum {
     SYS_ABOUT = 9001, SYS_SETTINGS, SYS_LAUNCHER, SYS_TERMINAL_MODE, SYS_RESTART, SYS_SHUTDOWN,
     SYS_NEW_FOLDER, SYS_NEW_FILE, SYS_WALLPAPER, SYS_NEXT_WALL, SYS_GO_HOME, SYS_GO_PICS, SYS_GO_NOTES,
     SYS_GO_TRASH, SYS_GO_ROOT, SYS_TIPS, SYS_NEW_TERMINAL, SYS_MONITOR, SYS_MIN_ALL, SYS_CLOSE_WIN,
-    SYS_OVERVIEW, SYS_BROWSER, SYS_SAVER,
+    SYS_OVERVIEW, SYS_BROWSER, SYS_SAVER, SYS_LOCK, SYS_SLEEP,
 };
+void ui_lock(bool sleep);               // greeter (sleep = sleep screen first); blocks until signed in again
 void saver_start();                     // screensaver (desktop.cpp)
 void sys_command(int cmd);
 

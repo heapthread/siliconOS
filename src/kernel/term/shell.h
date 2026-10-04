@@ -5,7 +5,7 @@
 
 class Shell;
 
-enum ShellRequest { SR_START_UI, SR_EXIT, SR_OPEN, SR_ZOOM, SR_WALLPAPER, SR_SETUP };
+enum ShellRequest { SR_START_UI, SR_EXIT, SR_OPEN, SR_ZOOM, SR_WALLPAPER, SR_SETUP, SR_LOCK, SR_SLEEP };
 
 struct ShellHost {
     virtual ~ShellHost() {}

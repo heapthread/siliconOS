@@ -14,6 +14,7 @@ const AppInfo app_infos[] = {
     {"settings", "Settings", "preferences", true, true},
     {"clock", "Clock", "clock and stopwatch", true, false},
     {"piano", "Piano", "pc speaker keys", true, false},
+    {"emoji", "Emoji", "emoji picker", true, false},
     {"wallpapers", "Wallpapers", "pick a backdrop", true, false},
     {"about", "About silicon", "this machine", true, false},
     {"minesweeper", "Minesweeper", "classic", true, false},
@@ -41,7 +42,7 @@ static App* create(const char* id, const char* arg) {
         {"minesweeper", new_minesweeper}, {"snake", new_snake}, {"reversi", new_reversi},
         {"trash", new_trash}, {"power", new_power}, {"browser", new_browser},
         {"stacker", new_stacker}, {"g2048", new_g2048}, {"breakout", new_breakout}, {"flappy", new_flappy},
-        {"photos", new_photos}, {"piano", new_piano},
+        {"photos", new_photos}, {"piano", new_piano}, {"emoji", new_emoji},
     };
     for (auto& t : table) if (!strcmp(t.id, id)) return t.fn(arg);
     return nullptr;

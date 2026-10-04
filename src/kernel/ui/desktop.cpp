@@ -3,6 +3,8 @@
 #include "desk.h"
 #include "../arch/arch.h"
 #include "../term/shell.h"
+#include "../display.h"
+#include "lockscreen.h"
 
 // ================================================================ state
 int SW, SH;
@@ -15,7 +17,14 @@ bool ui_mouse_left = false;
 CursorShape ui_cursor = CUR_ARROW;
 Window* cur_win = nullptr;
 
-enum DragKind { DRAG_NONE, DRAG_MOVE, DRAG_RESIZE, DRAG_CAPTURE, DRAG_DOCK };
+enum DragKind { DRAG_NONE, DRAG_MOVE, DRAG_RESIZE, DRAG_CAPTURE, DRAG_DOCK, DRAG_MARQUEE };
+static bool marquee_on = false;
+static int marquee_x0, marquee_y0;
+static u8 marquee_base[128];
+static Rect marquee_rect() {
+    int x0 = min(marquee_x0, ui_mouse_x), y0 = min(marquee_y0, ui_mouse_y);
+    return {x0, y0, iabs(marquee_x0 - ui_mouse_x) + 1, iabs(marquee_y0 - ui_mouse_y) + 1};
+}
 static DragKind drag = DRAG_NONE;
 static Window* drag_win = nullptr;
 static int drag_dx, drag_dy, drag_w0, drag_h0;
@@ -95,6 +104,60 @@ void ui_invalidate_all() {
 }
 
 // ================================================================ wallpaper
+// wallpapers are drawn from a copy scaled (cover-fit, bilinear) to the current screen size
+struct WallCache { Wallpaper* wp; Image img; };
+static WallCache wall_cache[2];
+
+static Image fit_cover(const Image& src, int dw, int dh) {
+    Image out = image_new(dw, dh, 0xFF000000);
+    if (!out.px || !src.px) return out;
+    // scale so the picture covers the screen, crop the overflow evenly
+    i64 sx = (i64)dw * 65536 / src.w, sy = (i64)dh * 65536 / src.h;
+    i64 sc = max(sx, sy);                                    // dest pixels per source pixel, 16.16
+    i64 vw = (i64)src.w * sc, vh = (i64)src.h * sc;
+    i64 offx = (vw - (i64)dw * 65536) / 2, offy = (vh - (i64)dh * 65536) / 2;
+    bool integer = sc % 65536 == 0;
+    for (int y = 0; y < dh; y++) {
+        i64 fy = ((i64)y * 65536 + offy) * 65536 / sc - 32768;
+        int y0 = (int)(fy >> 16), wy = (int)((fy >> 8) & 255);
+        int y1 = y0 + 1;
+        y0 = clamp(y0, 0, src.h - 1);
+        y1 = clamp(y1, 0, src.h - 1);
+        for (int x = 0; x < dw; x++) {
+            i64 fx = ((i64)x * 65536 + offx) * 65536 / sc - 32768;
+            int x0 = (int)(fx >> 16), wx = (int)((fx >> 8) & 255);
+            int x1 = clamp(x0 + 1, 0, src.w - 1);
+            x0 = clamp(x0, 0, src.w - 1);
+            if (integer) { out.px[y * dw + x] = src.px[clamp((int)(((i64)y * 65536 + offy) / sc), 0, src.h - 1) * src.w + clamp((int)(((i64)x * 65536 + offx) / sc), 0, src.w - 1)]; continue; }
+            u32 p00 = src.px[y0 * src.w + x0], p10 = src.px[y0 * src.w + x1];
+            u32 p01 = src.px[y1 * src.w + x0], p11 = src.px[y1 * src.w + x1];
+            u32 top = blend(p00, p10, (u32)wx), bot = blend(p01, p11, (u32)wx);
+            out.px[y * dw + x] = blend(top, bot, (u32)wy);
+        }
+    }
+    return out;
+}
+
+static const Image& wall_fit(Wallpaper* wp) {
+    for (auto& c : wall_cache) if (c.wp == wp && c.img.w == SW && c.img.h == SH) return c.img;
+    // evict the slot that doesn't hold the other wallpaper currently in use
+    WallCache* slot = &wall_cache[0];
+    if (wall_cache[0].wp && wall_cache[0].img.w == SW && wall_cache[0].img.h == SH && wall_cache[0].wp != wp) slot = &wall_cache[1];
+    if (slot->img.px) image_free(slot->img);
+    slot->wp = wp;
+    slot->img = fit_cover(wp->full, SW, SH);
+    return slot->img;
+}
+
+
+static void wall_cache_free() {
+    for (auto& c : wall_cache) {
+        if (c.img.px) image_free(c.img);
+        c.img = Image();
+        c.wp = nullptr;
+    }
+}
+
 void wallpaper_set(int i) {
     i = clamp(i, 0, wallpaper_count() - 1);
     if (i == settings.wallpaper) return;
@@ -119,6 +182,43 @@ void ui_wallpaper_command(Shell* sh, const char* arg) {
             return;
         }
     sh->outf("no wallpaper called %s\n", arg);
+}
+
+const Image& ui_wallpaper_fit() {
+    if (SW != fb.width || SH != fb.height) { SW = fb.width; SH = fb.height; wall_cache_free(); }
+    return wall_fit(wallpaper_get(settings.wallpaper));
+}
+
+// the screen changed size: relayout everything that depends on it
+static Rect work_area();
+void dock_layout();
+static void ui_screen_changed() {
+    SW = fb.width;
+    SH = fb.height;
+    wall_cache_free();
+    ui_mouse_x = clamp(ui_mouse_x, 0, SW - 1);
+    ui_mouse_y = clamp(ui_mouse_y, 0, SH - 1);
+    Rect wa = work_area();
+    for (int i = 0; i < windows.len; i++) {
+        Window* w = windows[i];
+        w->anim = A_NONE;
+        if (w->maximized) { w->r = wa; }
+        else {
+            w->r.w = min(w->r.w, SW);
+            w->r.h = min(w->r.h, SH - TOPBAR_H);
+            w->r.x = clamp(w->r.x, 0, max(0, SW - w->r.w));
+            w->r.y = clamp(w->r.y, TOPBAR_H, max(TOPBAR_H, SH - 60));
+        }
+        w->restore.w = min(w->restore.w, SW);
+        w->restore.h = min(w->restore.h, SH - TOPBAR_H);
+        image_free(w->surf);
+        w->surf = Image();
+        w->dirty = true;
+        AppCtx ctx(w);
+        w->app->on_resize(w->client().w, w->client().h);
+    }
+    dock_layout();
+    ui_invalidate_all();
 }
 
 // ================================================================ windows
@@ -466,7 +566,6 @@ static void draw_overview_labels(Canvas& c) {
 // ================================================================ screensaver: a warp through stars and chips
 static bool saver_on = false;
 static u64 saver_t0 = 0, saver_last = 0, last_input = 0;
-static const u64 SAVER_AFTER = 5 * 60 * 1000;
 struct WarpStar { int x, y, z; bool chip; };
 static WarpStar warp[180];
 
@@ -484,6 +583,14 @@ void saver_start() {
     for (auto& s : warp) warp_reset(s, false);
     menu_close();
     damage_all();
+}
+
+void ui_lock(bool sleep) {
+    if (saver_on) saver_on = false;
+    if (sleep) { sleep_run(); lock_after_wake(); }
+    else greeter_run(false);
+    last_input = ticks();
+    ui_invalidate_all();
 }
 
 static void saver_stop() {
@@ -547,16 +654,16 @@ static void compose_rect(Rect R) {
     // wallpaper, with a chunky pixel dissolve when it changes
     Wallpaper* wp = wallpaper_get(settings.wallpaper);
     int dlevel = wall_prev >= 0 ? (int)((ticks() - wall_t0) * 17 / 500) : 17;
-    if (dlevel < 17 && wp->full.w == SW && wallpaper_get(wall_prev)->full.w == SW)
-        c.dissolve(wallpaper_get(wall_prev)->full, wp->full, dlevel);
-    else if (wp->full.w == SW && wp->full.h == SH) c.blit_raw(wp->full.px, SW, SH, SW, 0, 0);
-    else c.blit_scaled(wp->full, 0, 0, SW, SH);
+    const Image& wcur = wall_fit(wp);
+    if (dlevel < 17 && wall_prev >= 0) c.dissolve(wall_fit(wallpaper_get(wall_prev)), wall_fit(wp), dlevel);
+    else c.blit_raw(wcur.px, SW, SH, SW, 0, 0);
     if (overview_on) {
         int t = (int)min<u64>(256, (ticks() - overview_t0) * 256 / 260);
         int e = overview_leaving ? 256 - ease_out(t) : ease_out(t);
         c.fill_alpha(0, 0, SW, SH, 0xFF0C0916, (u32)(150 * e / 256));
     } else {
         draw_desktop_icons(c);
+        if (marquee_on) draw_marquee(c, marquee_rect());
     }
     for (int i = 0; i < windows.len; i++) {
         Window* w = windows[i];
@@ -601,7 +708,7 @@ static void send_mouse(Window* w, MouseKind kind, int button, int wheel = 0) {
     MouseEv e{kind, ui_mouse_x - cl.x, ui_mouse_y - cl.y, button, wheel, ui_mouse_left};
     AppCtx ctx(w);
     if (w->app->dialog) {
-        if (kind == M_UP || kind == M_DOWN) dialog_mouse(w->app, e, cl.w, cl.h);
+        if (kind == M_UP || kind == M_DOWN || kind == M_WHEEL || kind == M_DBL) dialog_mouse(w->app, e, cl.w, cl.h);
         ui_invalidate();
         return;
     }
@@ -636,6 +743,7 @@ static void update_cursor() {
 }
 
 static void end_drag() {
+    if (drag == DRAG_MARQUEE) { marquee_on = false; damage(grow(marquee_rect(), 2)); }
     if (drag == DRAG_MOVE && drag_win && snap_zone) {
         drag_win->restore = drag_win->r;
         drag_win->maximized = snap_zone == 3;
@@ -780,7 +888,16 @@ static void on_button(int button, bool down) {
     }
     int di = desk_hit(mx, my);
     if (di >= 0) { desk_click(di, button, dbl, mx, my); return; }
-    if (desk_sel >= 0) { desk_sel = -1; damage({0, TOPBAR_H, 400, SH - TOPBAR_H}); }
+    if (button == 1) {
+        if (!kbd_ctrl_down()) desk_clear_sel();
+        desk_save_sel(marquee_base);
+        marquee_on = true;
+        marquee_x0 = mx;
+        marquee_y0 = my;
+        drag = DRAG_MARQUEE;
+        return;
+    }
+    if (desk_sel >= 0) desk_clear_sel();
     if (button == 2) desk_background_menu(mx, my);
 }
 
@@ -834,6 +951,13 @@ static void on_mouse_move(int ox, int oy) {
     case DRAG_CAPTURE:
         if (drag_win) send_mouse(drag_win, M_MOVE, 0);
         break;
+    case DRAG_MARQUEE: {
+        Rect prev = {min(marquee_x0, ox), min(marquee_y0, oy), iabs(marquee_x0 - ox) + 1, iabs(marquee_y0 - oy) + 1};
+        Rect now = marquee_rect();
+        damage(grow(rect_union(prev, now), 2));
+        desk_select_rect(now, marquee_base);
+        break;
+    }
     default: {
         int h = (popup.open || launcher_open) ? -1 : dock_hit(mx, my);
         if (h != dock_hover) { if (h >= 0 && dock_hover < 0) dock_anim_t = ticks(); dock_hover = h; damage(dock_area()); }
@@ -848,7 +972,7 @@ static void on_mouse_move(int ox, int oy) {
             if (w->client().contains(mx, my)) send_mouse(w, M_MOVE, 0);
         }
         // desktop icon hover glow
-        if (!w) damage({0, TOPBAR_H, 400, SH - TOPBAR_H - 100});
+        if (!w) damage(desk_area());
         break;
     }
     }
@@ -872,6 +996,7 @@ static void on_key(const KeyEvent& e) {
         if (f && f->app->wants_key_up() && !launcher_open) { AppCtx ctx(f); f->app->on_key(e); }
         return;
     }
+    if (e.ctrl && e.alt && e.key == 'l') { ui_lock(false); return; }
     if (e.alt && e.key == K_TAB) {
         if (!windows.len) return;
         if (!switcher_open) { switcher_open = true; switcher_sel = windows.len > 1 ? 1 : 0; }
@@ -930,7 +1055,10 @@ static void on_key(const KeyEvent& e) {
 }
 
 // ================================================================ main loop
+static void ui_screen_changed_hook() { if (desk_running) ui_screen_changed(); }
 void ui_run() {
+    static bool hooked = false;
+    if (!hooked) { hooked = true; display_on_change(ui_screen_changed_hook); }
     SW = fb.width;
     SH = fb.height;
     desk_running = true;
@@ -951,7 +1079,7 @@ void ui_run() {
         snprintf(b, sizeof(b), "welcome, %s. ctrl+space to search", settings.user);
         ui_notify("silicon desktop", b, "silicon");
     }
-    u64 last_frame = 0, last_beat = 0;
+    u64 last_frame = 0, last_beat = 0, last_frame_us = 0;
     u32 fs_gen = fs_generation(), set_gen = settings_generation();
     bool prev_left = false, prev_right = false;
     fps_t0 = ticks();
@@ -993,6 +1121,7 @@ void ui_run() {
         }
         extern void net_poll();
         net_poll();
+        display_poll();
         dock_layout();
         dock_animate();
         for (int i = 0; i < windows.len; i++) {
@@ -1009,7 +1138,8 @@ void ui_run() {
         }
         if (wall_prev >= 0) { if (ticks() - wall_t0 > 520) wall_prev = -1; damage_all(); }
         if (!last_input) last_input = ticks();
-        if (!saver_on && ticks() - last_input > SAVER_AFTER) saver_start();
+        if (!saver_on && settings.saver_min && ticks() - last_input > (u64)settings.saver_min * 60000) saver_start();
+        if (settings.sleep_min && ticks() - last_input > (u64)settings.sleep_min * 60000) ui_lock(true);
         if (saver_on) damage_all();
         if (toasts_active()) damage(toast_area());
         if (launcher_open && ticks() - launcher_t0 < 200) damage_all();
@@ -1034,13 +1164,20 @@ void ui_run() {
             fps_t0 = ticks();
             if (settings.show_fps) damage({0, 0, SW, TOPBAR_H});
         }
-        if (dmg_n && ticks() - last_frame >= 15) {
+        u64 now_us = ticks_us();
+        u64 interval_us = 1000000 / (u32)display_target_fps();
+        if (dmg_n && now_us - last_frame_us >= interval_us) {
+            // keep the cadence steady instead of drifting by the time a frame took
+            last_frame_us = now_us - last_frame_us > 2 * interval_us ? now_us : last_frame_us + interval_us;
             last_frame = ticks();
             compose();
         }
         // a hlt can oversleep a whole host timer period, so only sleep when nothing moves
         extern bool net_busy();
-        if (dmg_n || ticks() - last_frame < 120 || net_busy()) cpu_rest();
+        if (dmg_n) {
+            u64 due = last_frame_us + interval_us, n2 = ticks_us();
+            cpu_spin_us(n2 < due ? (u32)min<u64>(due - n2, 400) : 50);
+        } else if (ticks() - last_frame < 120 || net_busy()) cpu_rest();
         else cpu_idle();
     }
     fs_sync();

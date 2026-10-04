@@ -7,6 +7,7 @@
 #include "drv/drivers.h"
 #include "drv/pci.h"
 #include "term/console.h"
+#include "display.h"
 #include "fs/fs.h"
 
 extern u64 mem_total_bytes;
@@ -23,8 +24,20 @@ static bool poll_key(KeyEvent& e) {
 }
 
 // ================================================================ POST
+// the setup keys count from the first moment of POST, not only during the final wait
+static bool hot_setup = false, hot_menu = false;
+static void scan_hotkeys() {
+    KeyEvent e;
+    while (kbd_poll(e)) {
+        if (!e.down) continue;
+        if (e.key == K_DELETE || e.key == K_F2) hot_setup = true;
+        if (e.key == K_F12) hot_menu = true;
+    }
+}
+
 static int post_y = 0;
 static void post_line(const char* fmt, ...) {
+    scan_hotkeys();
     char b[200];
     va_list ap;
     va_start(ap, fmt);
@@ -69,7 +82,7 @@ static int post_screen(bool* enter_setup, bool* boot_menu) {
         c.fill(0, post_y, fb.width - 230, 16, FW_BLACK);
         c.text(24, post_y, b, i == steps ? FW_WHITE : FW_GRAY);
         fb_present_rect({0, post_y, fb.width, 16});
-        sleep_ms(settings.fast_boot ? 5 : 22);
+        for (u64 end = ticks() + (settings.fast_boot ? 5 : 22); ticks() < end;) { scan_hotkeys(); cpu_idle(); }
     }
     post_y += 32;
     post_line("Detecting IDE drives ...");
@@ -93,8 +106,11 @@ static int post_screen(bool* enter_setup, bool* boot_menu) {
     c.fill(0, py - 4, fb.width, 24, FW_BLACK);
     c.text(24, py, "Press DEL or F2 to enter SETUP, F12 for Boot Menu", FW_WHITE, 1, true);
     fb_present_rect({0, py - 4, fb.width, 24});
-    u64 until = ticks() + (settings.fast_boot ? 250 : 1600);
-    *enter_setup = *boot_menu = false;
+    u64 until = ticks() + (settings.fast_boot ? 700 : 1600);
+    scan_hotkeys();
+    *enter_setup = hot_setup;
+    *boot_menu = hot_menu;
+    if (hot_setup || hot_menu) until = 0;
     while (ticks() < until) {
         KeyEvent e;
         if (poll_key(e)) {
@@ -104,7 +120,7 @@ static int post_screen(bool* enter_setup, bool* boot_menu) {
         }
         // a little countdown bar
         int left = (int)(until - ticks());
-        int w = left * 300 / (settings.fast_boot ? 250 : 1600);
+        int w = left * 300 / (settings.fast_boot ? 700 : 1600);
         c.fill(24, py + 16, 300, 2, 0xFF222222);
         c.fill(24, py + 16, w, 2, FW_GRAY);
         fb_present_rect({24, py + 16, 300, 2});
@@ -132,10 +148,14 @@ static const char* const SIZES[] = {"Normal (1x)", "Large (2x)"};
 static const char* const TARGETS[] = {"Terminal", "Desktop"};
 static const char* const SHOWN[] = {"Hidden", "Shown"};
 static const char* const CLOCKS[] = {"12-hour", "24-hour"};
+static const char* const FPS_NAMES[] = {"Monitor refresh", "30 fps", "60 fps", "75 fps", "90 fps", "120 fps", "144 fps", "165 fps", "240 fps", "Unlimited"};
+static const int FPS_VALUES[] = {0, 30, 60, 75, 90, 120, 144, 165, 240, 1000};
+static const char* const RES_NAMES[] = {"Follow window", "1024x768", "1280x720", "1366x768", "1600x900", "1920x1080", "2560x1440"};
+static const int RES_W[] = {0, 1024, 1280, 1366, 1600, 1920, 2560}, RES_H[] = {0, 768, 720, 768, 900, 1080, 1440};
 static const char* theme_names[16];
 
 // working copies of the settings while the user edits
-static int v_net, v_shell, v_scale, v_theme, v_sounds, v_fps, v_clock, v_target, v_fast;
+static int v_net, v_shell, v_scale, v_theme, v_sounds, v_fps, v_clock, v_target, v_fast, v_greeter, v_fpscap, v_res;
 static bool changed = false;
 
 static void load_values() {
@@ -148,6 +168,11 @@ static void load_values() {
     v_clock = settings.clock24;
     v_target = settings.boot_target ? 1 : 0;
     v_fast = settings.fast_boot;
+    v_greeter = settings.greeter;
+    v_fpscap = 0;
+    for (int i = 0; i < 10; i++) if (settings.fps_limit == FPS_VALUES[i]) v_fpscap = i;
+    v_res = 0;
+    for (int i = 1; i < 7; i++) if (settings.res_w == RES_W[i] && settings.res_h == RES_H[i]) v_res = i;
     changed = false;
 }
 static void store_values() {
@@ -160,14 +185,19 @@ static void store_values() {
     settings.clock24 = v_clock;
     settings.boot_target = v_target;
     settings.fast_boot = v_fast;
+    settings.greeter = v_greeter;
+    settings.fps_limit = FPS_VALUES[v_fpscap];
+    settings.res_w = RES_W[v_res];
+    settings.res_h = RES_H[v_res];
     settings_save();
+    display_refresh_from_settings();
 }
 static void load_defaults() {
-    v_net = 1; v_shell = 0; v_scale = 0; v_theme = 0; v_sounds = 1; v_fps = 0; v_clock = 1; v_target = 0; v_fast = 0;
+    v_net = 1; v_shell = 0; v_scale = 0; v_theme = 0; v_sounds = 1; v_fps = 0; v_clock = 1; v_target = 0; v_fast = 0; v_greeter = 1; v_fpscap = 0; v_res = 0;
     changed = true;
 }
 
-enum { A_SAVE_EXIT = 1, A_DISCARD_EXIT, A_DEFAULTS, A_SAVE_REBOOT, A_SHUTDOWN };
+enum { A_SAVE_EXIT = 1, A_DISCARD_EXIT, A_DEFAULTS, A_SAVE_REBOOT, A_SHUTDOWN, A_CLEAR_PASS };
 
 static char info_buf[8][96];
 static Item tab_main[] = {
@@ -188,10 +218,14 @@ static Item tab_adv[] = {
     {"System Sounds", IT_CHOICE, ENABLED, 2, &v_sounds, "PC speaker beeps for clicks, errors and games.", 0},
     {"FPS Counter", IT_CHOICE, SHOWN, 2, &v_fps, "Show frames per second in the desktop's top bar.", 0},
     {"Clock Format", IT_CHOICE, CLOCKS, 2, &v_clock, "How the desktop clock shows the time.", 0},
+    {"Frame Rate Limit", IT_CHOICE, FPS_NAMES, 10, &v_fpscap, "How many frames per second the desktop may draw. 'Monitor refresh' uses your monitor's rate.", 0},
+    {"Display Resolution", IT_CHOICE, RES_NAMES, 7, &v_res, "'Follow window' resizes silicon to fill the QEMU window.", 0},
 };
 static Item tab_boot[] = {
     {"Boot Into", IT_CHOICE, TARGETS, 2, &v_target, "Start in the terminal (type 'ui' for the desktop) or go straight to the desktop.", 0},
     {"Fast Boot", IT_CHOICE, ENABLED, 2, &v_fast, "Skip most of this screen's delay and the long boot animation.", 0},
+    {"Sign-in Screen", IT_CHOICE, ENABLED, 2, &v_greeter, "Show the greeter when silicon starts.", 0},
+    {"Clear User Password", IT_ACTION, nullptr, 0, nullptr, "Forgot the password? This removes it so the greeter lets you in.", A_CLEAR_PASS},
     {"", IT_SPACER, nullptr, 0, nullptr, "", 0},
     {"1st Boot Device", IT_INFO, nullptr, 0, nullptr, "silicon boots from its own MBR bootloader on the ATA disk.", 0},
     {"2nd Boot Device", IT_INFO, nullptr, 0, nullptr, "Network boot isn't supported (yet).", 0},
@@ -228,7 +262,7 @@ static const char* info_value(int tab, int i) {
         case 7: strlcpy(b, "silicon fw 1.0 (" SILICON_VERSION ")", 96); break;
         default: b[0] = 0;
         }
-    } else if (tab == 2) strlcpy(b, i == 3 ? "[SiliconFS on ATA]" : "[Network - disabled]", 96);
+    } else if (tab == 2) strlcpy(b, i == 5 ? "[SiliconFS on ATA]" : "[Network - disabled]", 96);
     else b[0] = 0;
     return b;
 }
@@ -391,6 +425,7 @@ void firmware_setup() {
                 case A_DEFAULTS: if (confirm("Load setup defaults?")) load_defaults(); break;
                 case A_SAVE_REBOOT: if (confirm("Save and reboot?")) { store_values(); fs_sync(); power_reboot(); } break;
                 case A_SHUTDOWN: if (confirm("Shut down now?")) power_off(); break;
+                case A_CLEAR_PASS: if (confirm("Remove the user password?")) { settings.pass[0] = 0; settings_save(); changed = true; } break;
                 }
             }
             break;
