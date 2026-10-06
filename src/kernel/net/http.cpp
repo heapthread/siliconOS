@@ -106,6 +106,12 @@ void url_encode(const char* in, char* out, int n) {
     out[o] = 0;
 }
 
+static bool strstr_simple(const char* h, const char* n) {
+    int nl = (int)strlen(n);
+    for (; *h; h++) if (!memcmp(h, n, nl)) return true;
+    return false;
+}
+
 // ================================================================ requests
 struct HttpRequest {
     char url[600];
@@ -132,6 +138,12 @@ struct HttpRequest {
     char accept[96];
     char ua[80];
     char tlsv[12];
+    bool px;                       // going through the proxy
+    char pxhost[128];
+    u16 pxport;
+    bool px_sent;
+    char pxbuf[400];
+    int pxlen;
 };
 
 static void set_phase(HttpRequest* r, int p) { r->phase = p; r->phase_t = ticks(); }
@@ -148,6 +160,9 @@ static bool start(HttpRequest* r, const char* url) {
     if (!url_parse(url, r->u)) { fail(r, "that address doesn't look like a web address"); return false; }
     r->sock = -1;
     r->tls = nullptr;
+    r->px = net_proxy_get(r->pxhost, sizeof(r->pxhost), &r->pxport) && strcmp(r->u.host, "localhost") != 0;
+    r->px_sent = false;
+    r->pxlen = 0;
     r->len = 0;
     r->headers_done = false;
     r->status = 0;
@@ -276,10 +291,11 @@ int http_step(HttpRequest* r) {
             if (t - r->phase_t > 6000) fail(r, "no network connection (is a network card attached?)");
             break;
         }
-        int st = dns_resolve(r->u.host, &r->ip);
-        if (st < 0) { char m[200]; snprintf(m, sizeof(m), "couldn't find %s (DNS lookup failed)", r->u.host); fail(r, m); }
+        const char* via = r->px ? r->pxhost : r->u.host;
+        int st = dns_resolve(via, &r->ip);
+        if (st < 0) { char m[200]; snprintf(m, sizeof(m), "couldn't find %s (DNS lookup failed)", via); fail(r, m); }
         else if (st > 0) {
-            r->sock = tcp_connect(r->ip, r->u.port);
+            r->sock = tcp_connect(r->ip, r->px ? r->pxport : r->u.port);
             if (r->sock < 0) fail(r, "out of sockets");
             else set_phase(r, HTTP_CONNECTING);
         } else if (t - r->phase_t > 8000) fail(r, "DNS lookup timed out");
@@ -287,7 +303,27 @@ int http_step(HttpRequest* r) {
     }
     case HTTP_CONNECTING:
         if (tcp_failed(r->sock)) { fail(r, "connection refused or timed out"); break; }
-        if (tcp_state(r->sock) == TCP_ESTABLISHED) {
+        if (tcp_state(r->sock) == TCP_ESTABLISHED && r->px && !strcmp(r->u.scheme, "https")) {
+            // ask the proxy for a tunnel first
+            if (!r->px_sent) {
+                char c[300];
+                int n = snprintf(c, sizeof(c), "CONNECT %s:%u HTTP/1.1\r\nHost: %s:%u\r\n\r\n", r->u.host, r->u.port, r->u.host, r->u.port);
+                if (!tcp_send(r->sock, c, n)) { fail(r, "couldn't talk to the proxy"); break; }
+                r->px_sent = true;
+                r->phase_t = t;
+            } else {
+                u32 got = tcp_recv(r->sock, r->pxbuf + r->pxlen, sizeof(r->pxbuf) - 1 - r->pxlen);
+                r->pxlen += (int)got;
+                r->pxbuf[r->pxlen] = 0;
+                if (strstr_simple(r->pxbuf, "\r\n\r\n")) {
+                    if (!str_icontains(r->pxbuf, " 200")) { fail(r, "the proxy refused the connection"); break; }
+                    r->px = false;                       // tunnel is up: talk TLS from here
+                    r->tls = tls_new(r->sock, r->u.host);
+                    set_phase(r, HTTP_HANDSHAKE);
+                    r->px = true;
+                } else if (t - r->phase_t > 12000) fail(r, "the proxy didn't answer");
+            }
+        } else if (tcp_state(r->sock) == TCP_ESTABLISHED) {
             if (!strcmp(r->u.scheme, "https")) { r->tls = tls_new(r->sock, r->u.host); set_phase(r, HTTP_HANDSHAKE); }
             else set_phase(r, HTTP_SENDING);
         } else if (t - r->phase_t > 12000) fail(r, "connection timed out");
@@ -307,7 +343,7 @@ int http_step(HttpRequest* r) {
         int n = snprintf(req, sizeof(req),
                          "%s %s HTTP/1.1\r\nHost: %s%s\r\nUser-Agent: %s\r\n"
                          "Accept: %s\r\nAccept-Encoding: identity\r\nConnection: close\r\n",
-                         r->method, r->u.path, r->u.host, port, r->ua, r->accept);
+                         r->method, (r->px && !r->tls) ? r->url : r->u.path, r->u.host, port, r->ua, r->accept);
         if (r->req_body) n += snprintf(req + n, sizeof(req) - n, "Content-Type: %s\r\nContent-Length: %u\r\n", r->req_ctype, (u32)strlen(r->req_body));
         n += snprintf(req + n, sizeof(req) - n, "\r\n");
         bool ok = r->tls ? tls_send(r->tls, req, n) : tcp_send(r->sock, req, n);

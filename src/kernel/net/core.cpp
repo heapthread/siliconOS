@@ -138,6 +138,10 @@ static u16 ip_id = 1;
 
 bool ip_send(ip4 dst, u8 proto, const void* payload, u32 len) {
     if (!netcfg.up || len > 1480) return false;
+    {
+        u16 dport = ((proto == 6 || proto == 17) && len >= 4) ? (u16)((((const u8*)payload)[2] << 8) | ((const u8*)payload)[3]) : 0;
+        if (!fw_check(false, proto, dst, dport)) return false;
+    }
     u8 pkt[1520];
     IpHdr* h = (IpHdr*)pkt;
     h->vihl = 0x45;
@@ -262,6 +266,12 @@ void net_receive_frame(const u8* f, u32 len) {
     if (netcfg.ip && (ih->src & netcfg.mask) == (netcfg.ip & netcfg.mask)) arp_learn(ih->src, e->src);
     const u8* payload = d + ihl;
     u32 plen = tot - ihl;
+    {
+        u16 dport = ((ih->proto == 6 || ih->proto == 17) && plen >= 4) ? (u16)((payload[2] << 8) | payload[3]) : 0;
+        u16 sport = ((ih->proto == 6 || ih->proto == 17) && plen >= 4) ? (u16)((payload[0] << 8) | payload[1]) : 0;
+        if (ih->proto == 17 && sport == 67) dport = 68;          // DHCP replies are never filtered
+        if (!fw_check(true, ih->proto, ih->src, dport)) return;
+    }
     switch (ih->proto) {
     case 1: icmp_receive(ih, payload, plen); break;
     case 17: udp_receive(ih, payload, plen); break;

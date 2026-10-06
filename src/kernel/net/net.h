@@ -36,6 +36,34 @@ void net_dhcp_start();
 bool ip_send(ip4 dst, u8 proto, const void* payload, u32 len);
 u16  ip_checksum(const void* data, u32 len, u32 initial = 0);
 
+// ---------------------------------------------------------------- firewall and proxy (net/fw.cpp)
+struct FwRule {
+    bool allow;
+    u8   dir;                 // 1 inbound, 2 outbound, 3 both
+    u8   proto;               // 0 any, 1 icmp, 6 tcp, 17 udp
+    u16  port;                // 0 any: the packet's destination port (local for inbound, remote for outbound)
+    ip4  ip, mask;            // remote address match (mask 0 = any)
+    u32  hits;
+};
+struct FwLogEntry { u32 stamp; bool inbound; u8 proto; ip4 remote; u16 port; int rule; };
+extern bool fw_enabled;
+extern bool fw_out_default_allow;
+bool fw_check(bool inbound, u8 proto, ip4 remote, u16 port);   // false = drop the packet
+int  fw_rule_count();
+FwRule* fw_rule(int i);
+void fw_add(const FwRule& r);
+void fw_remove(int i);
+void fw_swap(int i, int j);
+void fw_clear_rules();
+void fw_save();
+int  fw_log_count();
+const FwLogEntry* fw_log(int i);        // 0 = newest
+void fw_log_clear();
+u32  fw_blocked_in();
+u32  fw_blocked_out();
+bool net_proxy_get(char* host, int n, u16* port);   // false when no proxy is set
+void net_proxy_set(const char* hostport);
+
 // ---------------------------------------------------------------- icmp (ping)
 typedef void (*PingReply)(void* ctx, u16 seq, u32 rtt_ms, ip4 from, u8 ttl);
 bool icmp_ping(ip4 dst, u16 id, u16 seq, PingReply cb, void* ctx);
