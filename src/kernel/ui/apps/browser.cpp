@@ -51,7 +51,8 @@ static const char* ABOUT_PAGE =
     "so don't type anything secret into a web page.</p>"
     "<p><a href=\"silicon://start\">back to the start page</a></p></body></html>";
 
-enum { B_BACK = 1, B_FWD, B_RELOAD, B_HOME, B_STOP, B_SOURCE, B_SAVE, B_BOOKMARK, B_BOOKMARKS, B_HISTORY, B_NEWWIN, B_CLOSE, B_IMAGES, B_CSS };
+enum { B_BACK = 1, B_FWD, B_RELOAD, B_HOME, B_STOP, B_SOURCE, B_SAVE, B_BOOKMARK, B_BOOKMARKS, B_HISTORY, B_NEWWIN, B_CLOSE, B_IMAGES, B_CSS,
+       B_NEWTAB, B_COPY, B_SELALL, B_FIND, B_OPENLINK, B_LINKTAB, B_COPYLINK, B_NEXTTAB, B_PREVTAB };
 
 static Vec<char*> global_history;
 
@@ -76,7 +77,12 @@ struct WebSheet {
     HttpRequest* req;
 };
 
-struct BrowserApp : App {
+struct BeamTab : App {
+    App* owner = nullptr;                    // the Beam window this tab lives in
+    int yoff = 0;                            // where the tab's area starts inside the window (below the tab strip)
+    bool hot2(int x, int y, int w, int h) { return hot(x, y + yoff, w, h); }
+    void set_title(const char* t);           // only the front tab titles the window
+    void open_in_new_tab(const char* u);
     Vec<WebImage*> images;
     Vec<WebSheet*> sheets;
     char* ext_css = nullptr;
@@ -107,12 +113,25 @@ struct BrowserApp : App {
     char status[160] = "";
     int layout_w = 0;
     int phase = -1;
+    // text selection (positions are a text item plus a caret between characters)
+    bool sel_on = false, sel_drag = false, sel_moved = false;
+    int sa_i = 0, sa_c = 0, sb_i = 0, sb_c = 0;
+    int down_x = 0, down_y = 0;
+    // find in page
+    bool find_on = false, find_focus = false;
+    TextField fq;
+    Vec<int> fm_item, fm_pos;
+    int fm_len = 0, fcur = -1;
+    char fq_last[128] = "";
+    // context menu
+    Menu ctxm;
+    char ctx_link[600] = "";
 
-    BrowserApp(const char* start) {
+    BeamTab(const char* start) {
         memset(&doc, 0, sizeof(doc));
         navigate(start && start[0] ? start : "silicon://start", false);
     }
-    ~BrowserApp() {
+    ~BeamTab() {
         clear_images();
         clear_sheets();
         sheets.free();
@@ -175,7 +194,7 @@ struct BrowserApp : App {
         u32 bg = doc.bg, fg = doc.fg;
         doc.bg = view_source ? 0 : bg;
         doc.fg = view_source ? 0 : fg;
-        doc.img_size = &BrowserApp::img_size_cb;
+        doc.img_size = &BeamTab::img_size_cb;
         doc.ext_css = show_css ? ext_css : nullptr;
         doc.ext_css_len = show_css && ext_css ? (u32)strlen(ext_css) : 0;
         doc.img_ctx = this;
@@ -188,8 +207,10 @@ struct BrowserApp : App {
         for (int i = 0; i < n; i++) { vis_bottom.push(0); vis_top.push(0); }
         for (int i = 0, m = -(1 << 30); i < n; i++) { m = max(m, doc.items[i].y + doc.items[i].h); vis_bottom[i] = m; }
         for (int i = n - 1, m = 1 << 30; i >= 0; i--) { m = min(m, doc.items[i].y); vis_top[i] = m; }
+        sel_on = sel_drag = false;
         sync_images();
         sync_sheets();
+        if (find_on) rebuild_matches(false);
         ui_invalidate();
     }
 
@@ -313,7 +334,7 @@ struct BrowserApp : App {
 
     // ------------------------------------------------------------ pictures
     static bool img_size_cb(void* ctx, const char* u, int* w, int* h) {
-        BrowserApp* b = (BrowserApp*)ctx;
+        BeamTab* b = (BeamTab*)ctx;
         for (int i = 0; i < b->images.len; i++) {
             WebImage* wi = b->images[i];
             if (wi->state == WebImage::OK && !strcmp(wi->url, u)) { *w = wi->nw; *h = wi->nh; return true; }
@@ -705,6 +726,184 @@ struct BrowserApp : App {
     }
     char* status_msg() { return status; }
 
+    // ------------------------------------------------------------ selection and find
+    bool has_selection() { return sel_on && (sa_i != sb_i || sa_c != sb_c); }
+    void sel_order(int* li, int* lc, int* hi, int* hc) {
+        if (sb_i < sa_i || (sb_i == sa_i && sb_c < sa_c)) { *li = sb_i; *lc = sb_c; *hi = sa_i; *hc = sa_c; }
+        else { *li = sa_i; *lc = sa_c; *hi = sb_i; *hc = sb_c; }
+    }
+    // the text item and caret nearest to a point in the view
+    bool text_at(int mx, int my, int* item, int* caret) {
+        int cy = my - TB_H + sc.pos();
+        int best = -1, bd = 1 << 30;
+        for (int i = 0; i < doc.items.len; i++) {
+            HtmlItem& it = doc.items[i];
+            if (it.kind != HK_TEXT || !it.tlen) continue;
+            int dy = cy < it.y ? it.y - cy : cy >= it.y + it.h ? cy - (it.y + it.h) + 1 : 0;
+            if (dy * 8 > bd) continue;
+            int dx = mx < it.x ? it.x - mx : mx >= it.x + it.w ? mx - (it.x + it.w) + 1 : 0;
+            int d = dy * 8 + dx;
+            if (d < bd) { bd = d; best = i; }
+        }
+        if (best < 0) return false;
+        HtmlItem& it = doc.items[best];
+        *item = best;
+        *caret = clamp((mx - it.x + 4 * it.scale) / (8 * it.scale), 0, (int)it.tlen);
+        return true;
+    }
+    void select_word_at(int mx, int my) {
+        int i, c;
+        if (!text_at(mx, my, &i, &c)) return;
+        const char* t = doc.str(doc.items[i]);
+        int n = doc.items[i].tlen;
+        int a = clamp(c, 0, n - 1), b = a;
+        if (t[a] == ' ') { sel_on = false; return; }
+        while (a > 0 && t[a - 1] != ' ') a--;
+        while (b < n && t[b] != ' ') b++;
+        sel_on = true; sa_i = sb_i = i; sa_c = a; sb_c = b;
+    }
+    void select_all_text() {
+        int first = -1, last = -1;
+        for (int i = 0; i < doc.items.len; i++) if (doc.items[i].kind == HK_TEXT && doc.items[i].tlen) { if (first < 0) first = i; last = i; }
+        if (first < 0) return;
+        sel_on = true; sa_i = first; sa_c = 0; sb_i = last; sb_c = doc.items[last].tlen;
+    }
+    void copy_selection() {
+        if (!has_selection()) return;
+        int li, lc, hi, hc;
+        sel_order(&li, &lc, &hi, &hc);
+        u32 cap = 4096, len = 0;
+        char* buf = (char*)kmalloc(cap);
+        const HtmlItem* prev = nullptr;
+        for (int i = li; i <= hi && i < doc.items.len; i++) {
+            HtmlItem& it = doc.items[i];
+            if (it.kind != HK_TEXT || !it.tlen) continue;
+            int a = i == li ? lc : 0, b = i == hi ? hc : it.tlen;
+            if (b <= a) continue;
+            if (len + (u32)(b - a) + 4 > cap) {
+                while (len + (u32)(b - a) + 4 > cap) cap *= 2;
+                buf = (char*)krealloc(buf, cap);
+            }
+            if (prev) {
+                if (it.y >= prev->y + prev->h - 2) buf[len++] = '\n';
+                else if (it.x > prev->x + prev->w + 2) buf[len++] = ' ';
+            }
+            memcpy(buf + len, doc.str(it) + a, b - a);
+            len += b - a;
+            prev = &it;
+        }
+        buf[len] = 0;
+        char* u = (char*)kmalloc(len * 4 + 8);
+        silicon_to_utf8(buf, len, u, len * 4 + 8);
+        clip_set(u, (u32)strlen(u));
+        kfree(u);
+        kfree(buf);
+    }
+    bool match_here(const char* t, int n, int p, const char* q, int ql) {
+        if (p + ql > n) return false;
+        for (int k = 0; k < ql; k++) if (to_lower(t[p + k]) != to_lower(q[k])) return false;
+        return true;
+    }
+    void rebuild_matches(bool jump) {
+        fm_item.clear(); fm_pos.clear();
+        fcur = -1;
+        fm_len = (int)strlen(fq.text);
+        if (!fm_len || !src) return;
+        for (int i = 0; i < doc.items.len && fm_item.len < 800; i++) {
+            HtmlItem& it = doc.items[i];
+            if (it.kind != HK_TEXT || !it.tlen) continue;
+            const char* t = doc.str(it);
+            for (int p = 0; p + fm_len <= (int)it.tlen; p++)
+                if (match_here(t, it.tlen, p, fq.text, fm_len)) { fm_item.push(i); fm_pos.push(p); p += fm_len - 1; }
+        }
+        if (fm_item.len) {
+            // start at the first match at or below the top of the view
+            int top = sc.pos();
+            fcur = 0;
+            for (int k = 0; k < fm_item.len; k++) if (doc.items[fm_item[k]].y >= top) { fcur = k; break; }
+            if (jump) goto_match();
+        }
+    }
+    void goto_match() {
+        if (fcur < 0 || fcur >= fm_item.len) return;
+        HtmlItem& it = doc.items[fm_item[fcur]];
+        if (it.y < sc.target + 20 || it.y > sc.target + view_h() - 60) sc.set(clamp(it.y - view_h() / 3, 0, max_scroll()));
+    }
+    void find_step(int dir) {
+        if (fq.text[0] && strcmp(fq.text, fq_last)) { strlcpy(fq_last, fq.text, sizeof(fq_last)); rebuild_matches(true); ui_invalidate(); return; }
+        if (!fm_item.len) return;
+        fcur = (fcur + dir + fm_item.len) % fm_item.len;
+        goto_match();
+        ui_invalidate();
+    }
+    void toggle_find() {
+        find_on = !find_on || !find_focus;
+        find_focus = find_on;
+        fq.focused = find_on;
+        if (find_on) { fq.select_all(); if (fq.text[0]) rebuild_matches(false); }
+        else { fm_item.clear(); fm_pos.clear(); fcur = -1; }
+        ui_invalidate();
+    }
+    Rect find_rect() { return {cw - 380, ch - ST_H - 32, 372, 28}; }
+    void draw_find(Canvas& c) {
+        Rect r = find_rect();
+        draw_bevel(c, r.x, r.y, r.w, r.h, th::panel);
+        fq.focused = find_focus;
+        fq.draw(c, r.x + 6, r.y + 3, 190);
+        char b[32];
+        if (fm_item.len) snprintf(b, sizeof(b), "%d/%d", fcur + 1, fm_item.len);
+        else snprintf(b, sizeof(b), fq.text[0] ? "none" : "");
+        c.text(r.x + 204, r.y + 8, b, fq.text[0] && !fm_item.len ? th::red : th::muted);
+        draw_button(c, r.x + 282, r.y + 3, 24, 22, "<", hot2(r.x + 282, r.y + 3, 24, 22));
+        draw_button(c, r.x + 310, r.y + 3, 24, 22, ">", hot2(r.x + 310, r.y + 3, 24, 22));
+        draw_button(c, r.x + 340, r.y + 3, 24, 22, "x", hot2(r.x + 340, r.y + 3, 24, 22));
+    }
+    void find_mouse(const MouseEv& e) {
+        Rect r = find_rect();
+        if (e.kind == M_DOWN && Rect{r.x + 6, r.y + 3, 190, 22}.contains(e.x, e.y)) { find_focus = true; addr_focus = false; focus_field = -1; fq.click(e.x - (r.x + 6), 190, kbd_shift_down()); }
+        else if (e.kind == M_MOVE && e.left && find_focus) fq.drag(e.x - (r.x + 6), 190);
+        else if (e.kind == M_UP && e.button == 1) {
+            if (Rect{r.x + 282, r.y + 3, 24, 22}.contains(e.x, e.y)) find_step(-1);
+            else if (Rect{r.x + 310, r.y + 3, 24, 22}.contains(e.x, e.y)) find_step(1);
+            else if (Rect{r.x + 340, r.y + 3, 24, 22}.contains(e.x, e.y)) { find_on = find_focus = false; fm_item.clear(); fm_pos.clear(); fcur = -1; }
+        }
+        ui_invalidate();
+    }
+    void draw_text_marks(Canvas& c, int i, HtmlItem& it, int x, int y) {
+        int cw8 = 8 * it.scale;
+        if (find_on && fm_len) {
+            for (int k = 0; k < fm_item.len; k++) {
+                if (fm_item[k] < i) continue;
+                if (fm_item[k] > i) break;
+                bool cur = k == fcur;
+                c.fill_alpha(x + fm_pos[k] * cw8, y - 1, fm_len * cw8, it.h + 2, cur ? 0xFFFF8C1A : 0xFFFFD21E, cur ? 160 : 120);
+            }
+        }
+        if (has_selection()) {
+            int li, lc, hi, hc;
+            sel_order(&li, &lc, &hi, &hc);
+            if (i >= li && i <= hi) {
+                int a = i == li ? lc : 0, b = i == hi ? hc : it.tlen;
+                if (b > a) c.fill_alpha(x + a * cw8, y - 1, (b - a) * cw8, it.h + 2, 0xFF2D62E0, 110);
+            }
+        }
+    }
+    void context_menu(const MouseEv& e) {
+        int i = hit_item(e.x, e.y);
+        ctxm.clear();
+        ctx_link[0] = 0;
+        if (i >= 0 && doc.items[i].link >= 0) {
+            strlcpy(ctx_link, doc.links[doc.items[i].link], sizeof(ctx_link));
+            ctxm.add("Open link", B_OPENLINK).add("Open in new tab", B_LINKTAB).add("Copy link address", B_COPYLINK).sep();
+        }
+        ctxm.add("Copy", B_COPY, "ctrl+c", has_selection()).add("Select all", B_SELALL, "ctrl+a").sep()
+            .add("Back", B_BACK, "alt+left", back.len > 0).add("Forward", B_FWD, "alt+right", fwd.len > 0).add("Reload", B_RELOAD, "f5").sep()
+            .add("Find in page" G_ELLIP, B_FIND, "ctrl+f").add("Page source", B_SOURCE, "", true, view_source).add("Save page", B_SAVE, "", src != nullptr);
+        Rect cl = win->client();
+        menu_popup(&ctxm, cl.x + e.x, cl.y + e.y + yoff, ctx_fn, owner);
+    }
+    static void ctx_fn(void* ctx, int cmd) { ((App*)ctx)->on_command(cmd); }
+
     // ------------------------------------------------------------ drawing
     int view_h() { return ch - TB_H - ST_H; }
     int max_scroll() { return max(0, doc.height - view_h()); }
@@ -731,7 +930,10 @@ struct BrowserApp : App {
             case HK_TEXT: {
                 if (it.bg) c.fill(x - 1, y - 1, it.w + 2, it.h + 2, it.bg);
                 if (hov) c.fill(x - 1, y - 1, it.w + 2, it.h + 2, blend(0xFFFFFFFF, accent(), 70));
+                draw_text_marks(c, i, it, x, y);
+                c.emoji_px = it.scale >= 2 ? 16 : 12;       // headings get the big emoji sprites
                 c.text_n(x, y, doc.str(it), it.tlen, it.color, it.scale, it.bold);
+                c.emoji_px = 12;
                 if (it.underline) c.hline(x, y + 11 * it.scale, it.w, hov ? accent() : it.color);
                 if (it.strike) c.hline(x, y + 6 * it.scale, it.w, it.color);
                 break;
@@ -769,7 +971,7 @@ struct BrowserApp : App {
                 break;
             }
             case HK_BUTTON:
-                draw_button(c, x, y, it.w, it.h, doc.str(it), hot(x, y, it.w, it.h), true);
+                draw_button(c, x, y, it.w, it.h, doc.str(it), hot2(x, y, it.w, it.h), true);
                 break;
             case HK_CHECK: {
                 HtmlField& f = doc.fields[it.field];
@@ -781,14 +983,15 @@ struct BrowserApp : App {
         }
         c.set_clip({0, 0, w, h});
         sb.draw(c, w - 10, top, vh, doc.height, vh, sc.pos());
+        if (find_on) draw_find(c);
 
         // toolbar
         c.fill(0, 0, w, TB_H, th::panel);
         c.hline(0, TB_H - 1, w, th::border);
-        draw_button(c, 8, 7, 26, 24, G_LEFT, hot(8, 7, 26, 24), false, back.len > 0);
-        draw_button(c, 38, 7, 26, 24, G_RIGHT, hot(38, 7, 26, 24), false, fwd.len > 0);
-        draw_button(c, 68, 7, 26, 24, req ? G_TIMES : "@", hot(68, 7, 26, 24));
-        draw_button(c, 98, 7, 28, 24, "~", hot(98, 7, 28, 24));
+        draw_button(c, 8, 7, 26, 24, G_LEFT, hot2(8, 7, 26, 24), false, back.len > 0);
+        draw_button(c, 38, 7, 26, 24, G_RIGHT, hot2(38, 7, 26, 24), false, fwd.len > 0);
+        draw_button(c, 68, 7, 26, 24, req ? G_TIMES : "@", hot2(68, 7, 26, 24));
+        draw_button(c, 98, 7, 28, 24, "~", hot2(98, 7, 28, 24));
         // address bar with a lock
         int ax = 132, aw = w - ax - 46;
         draw_bevel(c, ax, 7, aw, 24, th::white, true);
@@ -802,7 +1005,7 @@ struct BrowserApp : App {
         if (addr_focus && addr_fresh) c.fill(ax + 22, 11, min((int)strlen(shown), maxc) * 8 + 4, 16, blend(0xFFFFFFFF, accent(), 110));
         c.text_n(ax + 24, 13, shown + start, maxc, addr_focus ? th::text : 0xFF4A4262);
         if (addr_focus && (ticks() / 500) % 2 == 0) c.vline(ax + 24 + (addr.cur - start) * 8, 11, 16, accent());
-        draw_button(c, w - 38, 7, 30, 24, G_DIAM, hot(w - 38, 7, 30, 24));
+        draw_button(c, w - 38, 7, 30, 24, G_DIAM, hot2(w - 38, 7, 30, 24));
         // progress: a travelling "packet" while loading
         if (req) {
             int ph = phase;
@@ -850,7 +1053,18 @@ struct BrowserApp : App {
         int off = sc.target;
         if (sb.handle(e, cw - 10, TB_H, view_h(), doc.height, view_h(), off)) { sc.jump(off); return; }
         if (e.kind == M_WHEEL) { scroll_by(-e.wheel * 60); return; }
+        if (find_on && find_rect().contains(e.x, e.y)) { find_mouse(e); return; }
         if (e.kind == M_MOVE) {
+            if (sel_drag && e.left) {
+                if (iabs(e.x - down_x) > 3 || iabs(e.y - down_y) > 3) sel_moved = true;
+                if (sel_moved) {
+                    int ii, cc;
+                    if (text_at(e.x, e.y, &ii, &cc)) { sb_i = ii; sb_c = cc; }
+                    if (e.y < TB_H + 4) scroll_by(-24);
+                    else if (e.y > ch - ST_H - 4) scroll_by(24);
+                    ui_invalidate();
+                }
+            }
             int hl = -1;
             if (e.y > TB_H && e.y < ch - ST_H) {
                 int i = hit_item(e.x, e.y);
@@ -861,6 +1075,7 @@ struct BrowserApp : App {
         }
         if (e.kind != M_DOWN && e.kind != M_DBL && e.kind != M_UP) return;
         if (e.y < TB_H) {
+            sel_drag = false;
             if (e.kind != M_UP) {
                 if (Rect{132, 7, cw - 178, 24}.contains(e.x, e.y)) {
                     if (!addr_focus) { addr_focus = true; addr_fresh = true; addr.cur = addr.len; }
@@ -879,8 +1094,10 @@ struct BrowserApp : App {
             return;
         }
         if (e.y >= ch - ST_H) return;
+        if (e.kind == M_UP && e.button == 2) { context_menu(e); return; }
         if (e.kind == M_DOWN || e.kind == M_DBL) {
             addr_focus = false;
+            find_focus = false;
             int i = hit_item(e.x, e.y);
             focus_field = -1;
             if (i >= 0 && doc.items[i].field >= 0) {
@@ -893,18 +1110,46 @@ struct BrowserApp : App {
                     f.checked = !f.checked || !strcmp(f.type, "radio");
                 } else if (it.kind == HK_BUTTON) submit(f.form);
                 else focus_field = it.field;
+            } else if (e.button == 1) {
+                int ii, cc;
+                if (e.kind == M_DBL) { select_word_at(e.x, e.y); sel_drag = false; }
+                else if (text_at(e.x, e.y, &ii, &cc)) { sel_on = true; sa_i = sb_i = ii; sa_c = sb_c = cc; sel_drag = true; sel_moved = false; down_x = e.x; down_y = e.y; }
+                else sel_on = false;
             }
             ui_invalidate();
             return;
         }
         if (e.kind == M_UP && e.button == 1) {
-            int i = hit_item(e.x, e.y);
-            if (i >= 0 && doc.items[i].link >= 0) navigate(doc.links[doc.items[i].link], true);
+            bool dragged = sel_moved && sel_drag;
+            sel_drag = false;
+            if (!dragged) {
+                if (!has_selection()) sel_on = false;
+                int i = hit_item(e.x, e.y);
+                if (i >= 0 && doc.items[i].link >= 0) navigate(doc.links[doc.items[i].link], true);
+            }
+            ui_invalidate();
         }
     }
 
     void on_key(const KeyEvent& e) override {
         if (!e.down) return;
+        if (e.ctrl && e.key == 'f') { toggle_find(); return; }
+        if (find_on && find_focus) {
+            if (e.key == K_ESC) { find_on = find_focus = false; fm_item.clear(); fm_pos.clear(); fcur = -1; ui_invalidate(); return; }
+            if (e.key == K_ENTER) { find_step(e.shift ? -1 : 1); return; }
+            if (e.ctrl && (e.key == 'l' || e.key == 'r')) {}
+            else {
+                char before[128];
+                strlcpy(before, fq.text, sizeof(before));
+                if (fq.on_key(e)) {
+                    if (strcmp(before, fq.text)) { strlcpy(fq_last, fq.text, sizeof(fq_last)); rebuild_matches(true); }
+                    ui_invalidate();
+                    return;
+                }
+            }
+        }
+        if (e.ctrl && e.key == 'c' && !addr_focus && has_selection()) { copy_selection(); return; }
+        if (e.ctrl && e.key == 'a' && !addr_focus && focus_field < 0) { select_all_text(); ui_invalidate(); return; }
         if ((e.ctrl && e.key == 'l') || e.key == K_F6) { addr_focus = true; addr_fresh = true; focus_field = -1; addr.cur = addr.len; ui_invalidate(); return; }
         if (e.key == K_F5 || (e.ctrl && e.key == 'r')) { on_command(B_RELOAD); return; }
         if (e.alt && e.key == K_LEFT) { go_back(); return; }
@@ -923,7 +1168,14 @@ struct BrowserApp : App {
             HtmlField& f = doc.fields[focus_field];
             int l = (int)strlen(f.value);
             if (e.key == K_ENTER && strcmp(f.type, "textarea")) { submit(f.form); return; }
-            if (e.key == K_BACKSPACE && l) f.value[l - 1] = 0;
+            if (e.ctrl && e.key == 'v') {
+                u32 n = clip_len();
+                char* t = (char*)kmalloc(n + 8);
+                utf8_to_silicon(clip_get(), n, t, n + 8);
+                for (char* p = t; *p && l < 250; p++) if ((u8)*p >= 32 && *p != 127) { f.value[l++] = *p; f.value[l] = 0; }
+                kfree(t);
+            }
+            else if (e.key == K_BACKSPACE && l) f.value[l - 1] = 0;
             else if (e.key == K_ESC) focus_field = -1;
             else if (e.key == K_TAB) {
                 for (int k = 1; k <= doc.fields.len; k++) {
@@ -938,10 +1190,13 @@ struct BrowserApp : App {
         switch (e.key) {
         case K_DOWN: scroll_by(48); break;
         case K_UP: scroll_by(-48); break;
-        case K_PGDN: case ' ': scroll_by(view_h() - 40); break;
+        case K_PGDN: scroll_by(view_h() - 40); break;
+        case ' ': scroll_by(e.shift ? -(view_h() - 40) : view_h() - 40); break;
         case K_PGUP: scroll_by(-(view_h() - 40)); break;
         case K_HOME: sc.set(0); break;
         case K_END: sc.set(max_scroll()); break;
+        case 'j': scroll_by(48); break;
+        case 'k': scroll_by(-48); break;
         case K_BACKSPACE: go_back(); break;
         case K_ESC: on_command(B_STOP); break;
         }
@@ -961,7 +1216,12 @@ struct BrowserApp : App {
         case B_BOOKMARKS: navigate("silicon://bookmarks", true); break;
         case B_HISTORY: navigate("silicon://history", true); break;
         case B_NEWWIN: launch("__new__", "browser"); break;
-        case B_CLOSE: close(); break;
+        case B_COPY: copy_selection(); break;
+        case B_SELALL: select_all_text(); break;
+        case B_FIND: toggle_find(); break;
+        case B_OPENLINK: if (ctx_link[0]) navigate(ctx_link, true); break;
+        case B_LINKTAB: if (ctx_link[0]) open_in_new_tab(ctx_link); break;
+        case B_COPYLINK: if (ctx_link[0]) clip_set(ctx_link); break;
         case B_CSS:
             show_css = !show_css;
             if (!show_css) clear_sheets();
@@ -978,18 +1238,142 @@ struct BrowserApp : App {
     }
     int menus(Menu* m) override {
         m[0].clear(); strlcpy(m[0].title, "File", 24);
-        m[0].add("New window", B_NEWWIN).add("Save page", B_SAVE, "", src != nullptr).sep().add("Close", B_CLOSE, "ctrl+w");
-        m[1].clear(); strlcpy(m[1].title, "View", 24);
-        m[1].add("Reload", B_RELOAD, "f5").add("Stop", B_STOP, "esc", req != nullptr).sep().add("Page source", B_SOURCE, "", true, view_source)
+        m[0].add("New tab", B_NEWTAB, "ctrl+t").add("New window", B_NEWWIN).add("Save page", B_SAVE, "", src != nullptr).sep().add("Close tab", B_CLOSE, "ctrl+w");
+        m[1].clear(); strlcpy(m[1].title, "Edit", 24);
+        m[1].add("Copy", B_COPY, "ctrl+c", has_selection()).add("Select all", B_SELALL, "ctrl+a").sep().add("Find in page" G_ELLIP, B_FIND, "ctrl+f");
+        m[2].clear(); strlcpy(m[2].title, "View", 24);
+        m[2].add("Reload", B_RELOAD, "f5").add("Stop", B_STOP, "esc", req != nullptr).sep().add("Page source", B_SOURCE, "", true, view_source)
             .add("Show pictures", B_IMAGES, "", true, show_images)
             .add("Page styles (css)", B_CSS, "", true, show_css);
-        m[2].clear(); strlcpy(m[2].title, "Go", 24);
-        m[2].add("Back", B_BACK, "alt+left", back.len > 0).add("Forward", B_FWD, "alt+right", fwd.len > 0)
-            .add("Start page", B_HOME).sep().add("History", B_HISTORY);
-        m[3].clear(); strlcpy(m[3].title, "Bookmarks", 24);
-        m[3].add("Bookmark this page", B_BOOKMARK, "ctrl+d").add("Show bookmarks", B_BOOKMARKS);
+        m[3].clear(); strlcpy(m[3].title, "Go", 24);
+        m[3].add("Back", B_BACK, "alt+left", back.len > 0).add("Forward", B_FWD, "alt+right", fwd.len > 0)
+            .add("Start page", B_HOME).add("History", B_HISTORY).sep()
+            .add("Bookmark this page", B_BOOKMARK, "ctrl+d").add("Show bookmarks", B_BOOKMARKS).sep()
+            .add("Next tab", B_NEXTTAB, "ctrl+tab").add("Previous tab", B_PREVTAB, "ctrl+shift+tab");
         return 4;
     }
 };
+
+// ================================================================ the window: a strip of tabs
+static const int TAB_H = 26;
+
+struct BrowserApp : App {
+    Vec<BeamTab*> tabs;
+    int active = 0;
+    char tbuf[96];
+
+    BrowserApp(const char* start) { new_tab(start && start[0] ? start : "silicon://start"); }
+    ~BrowserApp() { for (int i = 0; i < tabs.len; i++) delete tabs[i]; tabs.free(); }
+
+    BeamTab* cur() { return tabs[active]; }
+    BeamTab* new_tab(const char* url) {
+        BeamTab* t = new BeamTab(url);
+        t->owner = this;
+        t->yoff = TAB_H;
+        t->win = win;
+        tabs.push(t);
+        active = tabs.len - 1;
+        set_title(title());
+        ui_invalidate();
+        return t;
+    }
+    void close_tab(int i) {
+        if (tabs.len <= 1) { close(); return; }
+        delete tabs[i];
+        tabs.remove(i);
+        if (active >= tabs.len) active = tabs.len - 1;
+        else if (i < active) active--;
+        set_title(title());
+        ui_invalidate();
+    }
+    void switch_to(int i) { active = (i + tabs.len) % tabs.len; set_title(title()); ui_invalidate(); }
+
+    const char* app_id() override { return "browser"; }
+    const char* title() override { return cur()->title(); }
+    int pref_w() override { return 780; }
+    int pref_h() override { return 540 + TAB_H; }
+    u32 background() override { return cur()->background(); }
+    void open_arg(const char* arg) override { if (arg) cur()->open_arg(arg); }
+    int cursor_at(int x, int y) override { return y < TAB_H ? CUR_ARROW : cur()->cursor_at(x, y - TAB_H); }
+    void tick() override {
+        for (int i = 0; i < tabs.len; i++) { tabs[i]->win = win; tabs[i]->tick(); }
+    }
+    int tab_w(int w) { return clamp((w - 36) / max(1, tabs.len), 60, 190); }
+
+    void draw(Canvas& c, int w, int h) override {
+        c.fill(0, 0, w, TAB_H, th::panel_dk);
+        c.hline(0, TAB_H - 1, w, th::border);
+        int tw = tab_w(w);
+        for (int i = 0; i < tabs.len; i++) {
+            int x = 4 + i * tw;
+            bool on = i == active, hov = hot(x, 0, tw - 2, TAB_H);
+            c.fill(x, on ? 2 : 4, tw - 2, TAB_H - (on ? 2 : 4), on ? th::panel : hov ? blend(th::panel_dk, th::white, 60) : th::panel_dk);
+            if (on) c.fill(x, 2, tw - 2, 2, accent());
+            c.vline(x + tw - 2, 5, TAB_H - 8, th::border);
+            const char* t = tabs[i]->doc.title[0] ? tabs[i]->doc.title : tabs[i]->url;
+            char lab[96];
+            snprintf(lab, sizeof(lab), "%s%s", tabs[i]->req ? G_ELLIP " " : "", t);
+            c.text_n(x + 8, 9, lab, (tw - 34) / 8, on ? th::text : th::muted, 1, on);
+            if (tabs.len > 1 && (on || hov)) c.text(x + tw - 18, 9, "x", hot(x + tw - 22, 4, 18, 18) ? th::red : th::muted, 1, true);
+        }
+        int px = 4 + tabs.len * tw + 2;
+        draw_button(c, px, 3, 22, 20, "+", hot(px, 3, 22, 20));
+        // the front tab gets the rest of the window
+        int ox = c.ox, oy = c.oy;
+        Rect oc = c.clip;
+        c.origin(ox, oy + TAB_H);
+        c.set_clip({0, 0, w, h - TAB_H});
+        cur()->win = win;
+        cur()->draw(c, w, h - TAB_H);
+        c.origin(ox, oy);
+        c.clip = oc;
+    }
+    void on_mouse(const MouseEv& e) override {
+        if (e.y >= TAB_H) { MouseEv m = e; m.y -= TAB_H; cur()->on_mouse(m); return; }
+        if (e.kind != M_UP) return;
+        int w = win ? win->client().w : 780;
+        int tw = tab_w(w);
+        if (e.button == 3) {
+            int i = (e.x - 4) / tw;
+            if (i >= 0 && i < tabs.len) close_tab(i);
+            return;
+        }
+        if (e.button != 1) return;
+        int px = 4 + tabs.len * tw + 2;
+        if (Rect{px, 3, 22, 20}.contains(e.x, e.y)) { new_tab("silicon://start"); return; }
+        int i = (e.x - 4) / tw;
+        if (i < 0 || i >= tabs.len) return;
+        if (tabs.len > 1 && e.x >= 4 + i * tw + tw - 22 && (i == active || true)) { close_tab(i); return; }
+        switch_to(i);
+    }
+    void on_key(const KeyEvent& e) override {
+        if (e.down && e.ctrl && !e.alt) {
+            if (e.key == 't') { new_tab("silicon://start"); cur()->addr_focus = true; cur()->addr_fresh = true; cur()->addr.cur = cur()->addr.len; return; }
+            if (e.key == 'w') { close_tab(active); return; }
+            if (e.key == K_TAB) { switch_to(active + (e.shift ? -1 : 1)); return; }
+            if (e.key == K_PGDN) { switch_to(active + 1); return; }
+            if (e.key == K_PGUP) { switch_to(active - 1); return; }
+        }
+        if (e.down && e.alt && e.key >= '1' && e.key <= '9') { if (e.key - '1' < tabs.len) switch_to(e.key - '1'); return; }
+        cur()->on_key(e);
+    }
+    int menus(Menu* m) override { return cur()->menus(m); }
+    void on_command(int cmd) override {
+        switch (cmd) {
+        case B_NEWTAB: new_tab("silicon://start"); cur()->addr_focus = true; cur()->addr_fresh = true; cur()->addr.cur = cur()->addr.len; break;
+        case B_CLOSE: close_tab(active); break;
+        case B_NEXTTAB: switch_to(active + 1); break;
+        case B_PREVTAB: switch_to(active - 1); break;
+        default: cur()->on_command(cmd); break;
+        }
+        ui_invalidate();
+    }
+};
+
+void BeamTab::set_title(const char* t) {
+    BrowserApp* b = (BrowserApp*)owner;
+    if (b && b->tabs.len && b->cur() == this) b->set_title(t);
+}
+void BeamTab::open_in_new_tab(const char* u) { ((BrowserApp*)owner)->new_tab(u); }
 
 App* new_browser(const char* arg) { return new BrowserApp(arg); }
