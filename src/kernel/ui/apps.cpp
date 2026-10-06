@@ -16,6 +16,27 @@ const AppInfo app_infos[] = {
     {"piano", "Piano", "pc speaker keys", true, false},
     {"emoji", "Emoji", "emoji picker", true, false},
     {"pdfview", "PDF", "document viewer", false, false},
+    {"pong", "Pong", "bounce the ball", true, false},
+    {"invaders", "Invaders", "defend the board", true, false},
+    {"asteroids", "Asteroids", "blast the rocks", true, false},
+    {"runner", "Runner", "jump the pins", true, false},
+    {"connect4", "Connect Four", "drop discs, line up four", true, false},
+    {"memory", "Memory", "find the matching pairs", true, false},
+    {"wordy", "Wordy", "guess the five letter word", true, false},
+    {"sudoku", "Sudoku", "fill the grid, no repeats", true, false},
+    {"solitaire", "Solitaire", "classic Klondike", true, false},
+    {"chess", "Chess", "play white against silicon", true, false},
+    {"calendar", "Calendar", "month view and events", true, false},
+    {"tasks", "Tasks", "to-do list", true, false},
+    {"hex", "Hex", "hex viewer", false, false},
+    {"storage", "Storage", "what fills the disk", true, false},
+    {"convert", "Convert", "unit converter", true, false},
+    {"palette", "Palette", "colour picker", true, false},
+    {"capture", "Capture", "screenshots", true, false},
+    {"weather", "Weather", "forecast from wttr.in", true, false},
+    {"typing", "Typing", "typing speed test", true, false},
+    {"network", "Network", "interface and ping", true, false},
+    {"archive", "Archive", "zip files", false, false},
     {"wallpapers", "Wallpapers", "pick a backdrop", true, false},
     {"about", "About silicon", "this machine", true, false},
     {"minesweeper", "Minesweeper", "classic", true, false},
@@ -44,6 +65,7 @@ static App* create(const char* id, const char* arg) {
         {"trash", new_trash}, {"power", new_power}, {"browser", new_browser},
         {"stacker", new_stacker}, {"g2048", new_g2048}, {"breakout", new_breakout}, {"flappy", new_flappy},
         {"photos", new_photos}, {"piano", new_piano}, {"emoji", new_emoji}, {"pdfview", new_pdfview},
+        {"pong", new_pong}, {"invaders", new_invaders}, {"asteroids", new_asteroids}, {"runner", new_runner}, {"connect4", new_connect4}, {"memory", new_memory}, {"wordy", new_wordy}, {"sudoku", new_sudoku}, {"solitaire", new_solitaire}, {"chess", new_chess}, {"calendar", new_calendar}, {"tasks", new_tasks}, {"hex", new_hex}, {"storage", new_storage}, {"convert", new_convert}, {"palette", new_palette}, {"capture", new_capture}, {"weather", new_weather}, {"typing", new_typing}, {"network", new_network}, {"archive", new_archive},
     };
     for (auto& t : table) if (!strcmp(t.id, id)) return t.fn(arg);
     return nullptr;
@@ -80,6 +102,7 @@ void open_path(const char* path) {
         if (w) w->app->open_arg(u);
         return;
     }
+    if (str_icontains(n->name, ".zip")) { launch("__new__", "archive"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (is_pdf_name(n->name)) { launch("__new__", "pdfview"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (is_image_name(n->name)) { launch("__new__", "photos"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (str_icontains(n->name, ".pix")) { App* a = create("pixel", path); Window* w = wm_open(a, a->pref_w(), a->pref_h()); w->resizable = a->resizable(); return; }

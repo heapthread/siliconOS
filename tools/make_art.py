@@ -3,6 +3,7 @@ wallpapers (256x192 drawn, scaled to 1024x768). Output: art/silicon/.
 Deterministic, so rebuilding gives identical files.
 """
 import math
+import sys
 import os
 import random
 
@@ -353,6 +354,8 @@ def build_icons():
     os.makedirs(os.path.join(OUT, "icons"), exist_ok=True)
     save_icon(icon_piano(), "piano")
     save_icon(icon_pdf(), "pdf")
+    import make_icons2
+    make_icons2.build(sys.modules[__name__])
     save_icon(icon_stacker(), "stacker")
     save_icon(icon_2048(), "g2048")
     save_icon(icon_breakout(), "breakout")

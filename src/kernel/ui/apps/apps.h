@@ -28,6 +28,27 @@ App* new_photos(const char* arg);
 App* new_piano(const char* arg);
 App* new_emoji(const char* arg);
 App* new_pdfview(const char* arg);
+App* new_pong(const char* arg);
+App* new_invaders(const char* arg);
+App* new_asteroids(const char* arg);
+App* new_runner(const char* arg);
+App* new_connect4(const char* arg);
+App* new_memory(const char* arg);
+App* new_wordy(const char* arg);
+App* new_sudoku(const char* arg);
+App* new_solitaire(const char* arg);
+App* new_chess(const char* arg);
+App* new_calendar(const char* arg);
+App* new_tasks(const char* arg);
+App* new_hex(const char* arg);
+App* new_storage(const char* arg);
+App* new_convert(const char* arg);
+App* new_palette(const char* arg);
+App* new_capture(const char* arg);
+App* new_weather(const char* arg);
+App* new_typing(const char* arg);
+App* new_network(const char* arg);
+App* new_archive(const char* arg);
 
 bool is_pdf_name(const char* name);     // .pdf (pdfview.cpp)
 bool is_image_name(const char* name);   // .png .jpg .gif .bmp (photos.cpp)
