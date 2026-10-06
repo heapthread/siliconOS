@@ -27,7 +27,9 @@ App* new_flappy(const char* arg);
 App* new_photos(const char* arg);
 App* new_piano(const char* arg);
 App* new_emoji(const char* arg);
+App* new_pdfview(const char* arg);
 
+bool is_pdf_name(const char* name);     // .pdf (pdfview.cpp)
 bool is_image_name(const char* name);   // .png .jpg .gif .bmp (photos.cpp)
 
 // high scores live in /home/games/<name>.best (games.cpp)

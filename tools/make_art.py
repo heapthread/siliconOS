@@ -314,6 +314,24 @@ def icon_photos():
     return im
 
 
+def icon_pdf():
+    im = new()
+    d = ImageDraw.Draw(im)
+    rect(d, 6, 2, 25, 29, WHITE)
+    d.polygon([(19, 2), (25, 2), (25, 8)], fill=(190, 180, 210, 255))
+    rect(d, 6, 14, 25, 22, PINK)
+    # P D F as tiny blocks
+    for x0 in (8, 13, 18):
+        rect(d, x0, 16, x0, 20, WHITE)
+        rect(d, x0, 16, x0 + 2, 16, WHITE)
+        rect(d, x0 + 2, 17, x0 + 2, 18, WHITE)
+        rect(d, x0, 18, x0 + 2, 18, WHITE)
+    rect(d, 9, 5, 21, 5, (190, 180, 210, 255))
+    rect(d, 9, 8, 17, 8, (190, 180, 210, 255))
+    rect(d, 9, 25, 22, 25, (190, 180, 210, 255))
+    return im
+
+
 def icon_piano():
     im = new()
     d = ImageDraw.Draw(im)
@@ -334,6 +352,7 @@ def icon_piano():
 def build_icons():
     os.makedirs(os.path.join(OUT, "icons"), exist_ok=True)
     save_icon(icon_piano(), "piano")
+    save_icon(icon_pdf(), "pdf")
     save_icon(icon_stacker(), "stacker")
     save_icon(icon_2048(), "g2048")
     save_icon(icon_breakout(), "breakout")

@@ -35,6 +35,7 @@ ICONS = [
     ("stacker", "silicon/icons/stacker.png"), ("g2048", "silicon/icons/g2048.png"),
     ("breakout", "silicon/icons/breakout.png"), ("flappy", "silicon/icons/flappy.png"),
     ("photos", "silicon/icons/photos.png"), ("piano", "silicon/icons/piano.png"),
+    ("pdf", "silicon/icons/pdf.png"),
 ]
 WALLPAPERS = [
     ("wafer", "silicon/wallpapers/wafer.png"),
