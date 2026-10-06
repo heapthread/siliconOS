@@ -7,10 +7,7 @@ enum {
     F_COPY, F_CUT, F_PASTE, F_SELALL,
 };
 
-// the file clipboard: paths copied or cut in any Files window
-static Vec<char*> g_fclip;
-static bool g_fclip_cut = false;
-static void fclip_clear() { for (int i = 0; i < g_fclip.len; i++) kfree(g_fclip[i]); g_fclip.clear(); }
+// copied and cut files live on the system clipboard (clip_files_*), so other apps can see them too
 
 static const int TOOLBAR_H = 34, SIDEBAR_W = 132, STATUS_H = 20;
 
@@ -143,19 +140,13 @@ struct FilesApp : App {
         Vec<FsNode*> items;
         picked(items);
         if (!items.len) { items.free(); return; }
-        fclip_clear();
-        g_fclip_cut = cut;
-        char* text = (char*)kmalloc(items.len * 260 + 4);
-        int o = 0;
-        text[0] = 0;
+        clip_files_begin(cut);
         for (int i = 0; i < items.len; i++) {
             char p[256];
             fs_path(items[i], p, sizeof(p));
-            g_fclip.push(strdup(p));
-            o += snprintf(text + o, 260, "%s%s", i ? "\n" : "", p);
+            clip_files_add(p);
         }
-        clip_set(text);
-        kfree(text);
+        clip_files_end();
         char msg[48];
         snprintf(msg, sizeof(msg), "%d item%s", items.len, items.len == 1 ? "" : "s");
         ui_notify(cut ? "Cut" : "Copied", msg, "folder");
@@ -164,12 +155,25 @@ struct FilesApp : App {
     void do_paste() {
         FsNode* d = dir();
         int done = 0, skipped = 0;
-        for (int i = 0; i < g_fclip.len; i++) {
-            FsNode* src = fs_lookup(g_fclip[i]);
+        if (clip_kind() == CLIP_IMAGE) {
+            // a picture on the clipboard becomes a new BMP file in this folder
+            u32 len = 0;
+            u8* bmp = image_encode_bmp(*clip_image(), &len);
+            char nm[FS_NAME_MAX];
+            fs_unique_name(d, "pasted image.bmp", nm, sizeof(nm));
+            FsNode* f = bmp ? fs_create(d, nm, false) : nullptr;
+            if (f && fs_write(f, bmp, len)) done++; else skipped++;
+            if (bmp) kfree(bmp);
+        }
+        bool cut = clip_files_cut();
+        Vec<char*> paths;
+        for (int i = 0; i < clip_file_count(); i++) paths.push(strdup(clip_file(i)));
+        for (int i = 0; i < paths.len; i++) {
+            FsNode* src = fs_lookup(paths[i]);
             if (!src || src == fs_root()) continue;
             if (src->dir && (src == d || fs_is_ancestor(src, d))) { skipped++; continue; }
             char nm[FS_NAME_MAX];
-            if (g_fclip_cut) {
+            if (cut) {
                 if (src->parent == d) continue;
                 fs_unique_name(d, src->name, nm, sizeof(nm));
                 if (fs_move(src, d, nm)) done++; else skipped++;
@@ -178,7 +182,9 @@ struct FilesApp : App {
                 if (fs_copy(src, d, nm)) done++; else skipped++;
             }
         }
-        if (g_fclip_cut) fclip_clear();
+        for (int i = 0; i < paths.len; i++) kfree(paths[i]);
+        paths.free();
+        if (cut && clip_kind() == CLIP_FILES) clip_clear();
         multi.clear();
         sel = -1;
         char msg[64];
@@ -399,7 +405,7 @@ struct FilesApp : App {
             .add("Open", F_OPEN, "enter", has).add("Rename" G_ELLIP, F_RENAME, "f2", has).add("Duplicate", F_DUP, "ctrl+d", has)
             .add("Move to Trash", F_TRASH, "del", has).sep().add("Close", F_CLOSE, "ctrl+w");
         m[1].clear(); strlcpy(m[1].title, "Edit", 24);
-        m[1].add("Copy", F_COPY, "ctrl+c", has).add("Cut", F_CUT, "ctrl+x", has).add("Paste", F_PASTE, "ctrl+v", g_fclip.len > 0)
+        m[1].add("Copy", F_COPY, "ctrl+c", has).add("Cut", F_CUT, "ctrl+x", has).add("Paste", F_PASTE, "ctrl+v", (clip_file_count() > 0 || clip_kind() == CLIP_IMAGE))
             .sep().add("Select all", F_SELALL, "ctrl+a");
         m[2].clear(); strlcpy(m[2].title, "View", 24);
         m[2].add("As icons", F_VIEW_ICONS, "", true, !list_view).add("As list", F_VIEW_LIST, "", true, list_view);
@@ -492,7 +498,7 @@ struct FilesApp : App {
                      .add(dir() == fs_trash_dir() ? "Delete forever" : "Move to Trash", F_TRASH);
                 } else if (content().contains(e.x, e.y)) {
                     m.add("New folder", F_NEW_FOLDER).add("New text file", F_NEW_FILE).sep()
-                     .add("Paste", F_PASTE, "", g_fclip.len > 0).add("Select all", F_SELALL).sep()
+                     .add("Paste", F_PASTE, "", (clip_file_count() > 0 || clip_kind() == CLIP_IMAGE)).add("Select all", F_SELALL).sep()
                      .add("As icons", F_VIEW_ICONS, "", true, !list_view).add("As list", F_VIEW_LIST, "", true, list_view);
                 }
                 if (m.count) menu_popup(&m, cl.x + e.x, cl.y + e.y, ctx_fn, this);

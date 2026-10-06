@@ -15,6 +15,7 @@ static void toolbar(Canvas& c, int w, const char* icon_id, const char* label) {
 // ================================================================ Capture
 struct CaptureApp : App {
     int delay_s = 3;
+    bool to_clip = true;
     int state = 0;                 // 0 idle, 1 counting down, 2 grab
     u64 t_start = 0;
     char last_path[96] = "";
@@ -65,6 +66,7 @@ struct CaptureApp : App {
         Image img = image_new(w, h, 0);
         if (img.px) {
             for (int y = 0; y < h; y++) memcpy(img.px + y * w, b.px + y * b.pitch, (size_t)w * 4);
+            if (to_clip) clip_set_image(img);
             image_shrink(img, 340, 190);
             preview = img;
         }
@@ -87,6 +89,7 @@ struct CaptureApp : App {
             draw_button(c, 60 + i * 52, BAR + 10, 48, 22, b, hot(60 + i * 52, BAR + 10, 48, 22), delay_s == ds[i]);
         }
         draw_button(c, w - 130, BAR + 10, 116, 22, "Take screenshot", hot(w - 130, BAR + 10, 116, 22), true);
+        draw_checkbox(c, 16, h - 30, "also copy to the clipboard", to_clip);
         int py = BAR + 46;
         c.fill(16, py, w - 32, 200, 0xFF2A2440);
         if (preview.px) c.blit(preview, 16 + (w - 32 - preview.w) / 2, py + (200 - preview.h) / 2);
@@ -105,6 +108,7 @@ struct CaptureApp : App {
         int w = win ? win->client().w : 380, h = win ? win->client().h : 320;
         if (Rect{w - 130, BAR + 10, 116, 22}.contains(e.x, e.y)) start();
         if (last_path[0] && Rect{w - 110, h - 34, 96, 22}.contains(e.x, e.y)) open_path(last_path);
+        if (Rect{16, h - 32, 210, 20}.contains(e.x, e.y)) to_clip = !to_clip;
         ui_invalidate();
     }
 };

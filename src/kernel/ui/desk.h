@@ -76,7 +76,7 @@ void menu_activate(int item);
 
 extern Rect bar_menu_rects[5];
 extern int bar_menu_count;
-extern Rect chip_rect, clock_rect, search_rect;
+extern Rect chip_rect, clock_rect, search_rect, bell_rect;
 void open_bar_menu(int i);
 void draw_topbar(Canvas& c);
 

@@ -280,8 +280,24 @@ struct PhotosApp : App {
         set_title(title());
         ui_invalidate();
     }
+    void paste_picture() {
+        const Image* im = clip_image();
+        if (!im) return;
+        u32 len = 0;
+        u8* bmp = image_encode_bmp(*im, &len);
+        if (!bmp) return;
+        fs_mkdirs("/home/pictures");
+        char nm[FS_NAME_MAX], path[128];
+        fs_unique_name(fs_lookup("/home/pictures"), "pasted image.bmp", nm, sizeof(nm));
+        snprintf(path, sizeof(path), "/home/pictures/%s", nm);
+        FsNode* f = fs_create_path(path, false);
+        if (f && fs_write(f, bmp, len)) { scan(); open_arg(path); ui_notify("Pasted", nm, "photos"); }
+        kfree(bmp);
+    }
     void on_key(const KeyEvent& e) override {
         if (!e.down) return;
+        if (e.ctrl && e.key == 'v') { paste_picture(); return; }
+        if (e.ctrl && e.key == 'c' && viewing && img.px) { clip_set_image(img); ui_notify("Copied", "the picture is on the clipboard", "photos"); return; }
         if (!viewing) {
             if (e.key == K_ENTER && hover >= 0) open_index(hover);
             return;
@@ -298,7 +314,7 @@ struct PhotosApp : App {
     }
     int menus(Menu* m) override {
         m[0].clear(); strlcpy(m[0].title, "View", 24);
-        m[0].add("All pictures", 1, "esc", viewing).add("Previous", 2, "left", viewing && cur > 0)
+        m[0].add("Copy picture", 7, "ctrl+c", viewing && img.px).add("Paste picture", 8, "ctrl+v", clip_kind() == CLIP_IMAGE).sep().add("All pictures", 1, "esc", viewing).add("Previous", 2, "left", viewing && cur > 0)
             .add("Next", 3, "right", viewing && cur < files.len - 1).sep()
             .add("Fit to window", 4, "f", viewing, fit).add("Actual size", 5, "1", viewing).add("Refresh", 6);
         return 1;
@@ -310,6 +326,8 @@ struct PhotosApp : App {
         if (cmd == 4) { fit = true; pan_x = pan_y = 0; }
         if (cmd == 5) { fit = false; zoom = 256; pan_x = pan_y = 0; }
         if (cmd == 6) scan();
+        if (cmd == 7 && img.px) clip_set_image(img);
+        if (cmd == 8) paste_picture();
         ui_invalidate();
     }
 };

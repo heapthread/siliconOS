@@ -852,6 +852,7 @@ static void on_button(int button, bool down) {
         for (int i = 0; i < bar_menu_count; i++)
             if (bar_menu_rects[i].contains(mx, my)) { open_bar_menu(i); return; }
         if (search_rect.contains(mx, my)) { launcher_show(); return; }
+        if (bell_rect.contains(mx, my)) { AppCtx ctx(nullptr); launch("notifications"); return; }
         if (clock_rect.contains(mx, my)) { AppCtx ctx(nullptr); launch("clock"); return; }
         return;
     }

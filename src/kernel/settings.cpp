@@ -32,6 +32,8 @@ static void defaults() {
     settings.pass[0] = 0;
     settings.sleep_min = 15;
     settings.saver_min = 5;
+    settings.dnd = false;
+    settings.muted[0] = 0;
 }
 
 static u32 gen = 0;
@@ -73,6 +75,8 @@ void settings_load() {
         else if (!strcmp(key, "pass")) strlcpy(settings.pass, val, sizeof(settings.pass));
         else if (!strcmp(key, "sleep_min")) settings.sleep_min = clamp(atoi(val), 0, 600);
         else if (!strcmp(key, "saver_min")) settings.saver_min = clamp(atoi(val), 0, 600);
+        else if (!strcmp(key, "dnd")) settings.dnd = atoi(val) != 0;
+        else if (!strcmp(key, "muted")) strlcpy(settings.muted, val, sizeof(settings.muted));
     }
 }
 
@@ -83,11 +87,11 @@ void settings_save() {
              "user=%s\nhostname=%s\nwallpaper=%d\naccent=%d\nterm_theme=%d\nterm_scale=%d\n"
              "clock24=%d\nshow_seconds=%d\ndock_magnify=%d\nsounds=%d\nshow_fps=%d\nshell=%s\n"
              "boot_target=%d\nnet_enabled=%d\nfast_boot=%d\nfps_limit=%d\nres_w=%d\nres_h=%d\ngreeter=%d\npass=%s\n"
-             "sleep_min=%d\nsaver_min=%d\n",
+             "sleep_min=%d\nsaver_min=%d\ndnd=%d\nmuted=%s\n",
              settings.user, settings.hostname, settings.wallpaper, settings.accent, settings.term_theme,
              settings.term_scale, settings.clock24, settings.show_seconds, settings.dock_magnify, settings.sounds,
              settings.show_fps, settings.shell, settings.boot_target, settings.net_enabled, settings.fast_boot,
              settings.fps_limit, settings.res_w, settings.res_h, settings.greeter, settings.pass, settings.sleep_min,
-             settings.saver_min);
+             settings.saver_min, settings.dnd, settings.muted);
     fs_write_text("/system/settings", b);
 }

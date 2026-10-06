@@ -64,6 +64,17 @@ int  ui_fps();
 void ui_notify(const char* title, const char* body, const char* icon_name = "silicon");
 void ui_beep(int kind);                // 0 click, 1 error, 2 success
 
+// notification history (the notification centre)
+struct NotifRec { char title[40]; char body[96]; char icon[24]; u32 stamp; };
+int  notif_count();
+const NotifRec* notif_get(int i);       // 0 = oldest
+void notif_remove(int i);
+void notif_clear();
+int  notif_unseen();
+void notif_mark_seen();
+bool notif_muted(const char* source);
+void notif_set_muted(const char* source, bool muted);
+
 // ---------------------------------------------------------------- menus
 typedef void (*MenuFn)(void* ctx, int cmd);
 struct MenuItem {

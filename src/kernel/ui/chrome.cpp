@@ -167,6 +167,7 @@ static Menu bar_menus[5];
 int bar_menu_count = 0;
 Rect bar_menu_rects[5];
 Rect chip_rect, clock_rect, search_rect;
+extern Rect bell_rect;
 
 static void build_bar_menus() {
     Window* f = wm_focused();
@@ -275,6 +276,13 @@ void draw_topbar(Canvas& c) {
     search_rect = {rx - 2, 0, 24, TOPBAR_H};
     if (search_rect.contains(ui_mouse_x, ui_mouse_y) || launcher_open) c.fill(search_rect.x, 2, search_rect.w, TOPBAR_H - 4, blend(th::bar_bg, accent(), 80));
     c.blit(icon("launcher")->small, rx + 2, 4);
+    // notification bell: a dot for unread items, a slash for do not disturb
+    rx -= 26;
+    bell_rect = {rx - 2, 0, 24, TOPBAR_H};
+    if (bell_rect.contains(ui_mouse_x, ui_mouse_y) || wm_find("notifications")) c.fill(bell_rect.x, 2, bell_rect.w, TOPBAR_H - 4, blend(th::bar_bg, accent(), 80));
+    c.blit(icon("notifications")->small, rx + 2, 4);
+    if (settings.dnd) c.line(rx + 3, 19, rx + 17, 5, th::red);
+    else if (notif_unseen()) c.circle(rx + 16, 6, 3, th::red, true);
     // network status: a little signal glyph
     rx -= 26;
     extern bool net_link_up();
@@ -458,7 +466,57 @@ void ui_beep(int kind) {
     else speaker_beep(1200, 8);
 }
 
+static Vec<NotifRec> notif_hist;
+static int notif_seen = 0;
+Rect bell_rect = {0, 0, 0, 0};
+int  notif_count() { return notif_hist.len; }
+const NotifRec* notif_get(int i) { return i >= 0 && i < notif_hist.len ? &notif_hist[i] : nullptr; }
+void notif_remove(int i) { if (i >= 0 && i < notif_hist.len) { notif_hist.remove(i); if (notif_seen > notif_hist.len) notif_seen = notif_hist.len; damage({0, 0, SW, TOPBAR_H}); } }
+void notif_clear() { notif_hist.clear(); notif_seen = 0; damage({0, 0, SW, TOPBAR_H}); }
+int  notif_unseen() { return max(0, notif_hist.len - notif_seen); }
+void notif_mark_seen() { if (notif_seen != notif_hist.len) { notif_seen = notif_hist.len; damage({0, 0, SW, TOPBAR_H}); } }
+bool notif_muted(const char* source) {
+    int n = (int)strlen(source);
+    for (const char* p = settings.muted; *p;) {
+        const char* e = strchr(p, ',');
+        int l = e ? (int)(e - p) : (int)strlen(p);
+        if (l == n && !memcmp(p, source, n)) return true;
+        if (!e) break;
+        p = e + 1;
+    }
+    return false;
+}
+void notif_set_muted(const char* source, bool mute) {
+    if (notif_muted(source) == mute) return;
+    if (mute) {
+        if (settings.muted[0]) strlcat(settings.muted, ",", sizeof(settings.muted));
+        strlcat(settings.muted, source, sizeof(settings.muted));
+    } else {
+        char out[96] = "";
+        int n = (int)strlen(source);
+        for (const char* p = settings.muted; *p;) {
+            const char* e = strchr(p, ',');
+            int l = e ? (int)(e - p) : (int)strlen(p);
+            if (!(l == n && !memcmp(p, source, n))) { if (out[0]) strlcat(out, ",", sizeof(out)); { int ol = (int)strlen(out); for (int q = 0; q < l && ol + q < (int)sizeof(out) - 1; q++) { out[ol + q] = p[q]; out[ol + q + 1] = 0; } } }
+            if (!e) break;
+            p = e + 1;
+        }
+        strlcpy(settings.muted, out, sizeof(settings.muted));
+    }
+    settings_save();
+}
+
 void ui_notify(const char* title, const char* body, const char* icon_name) {
+    // every notification is kept in the history, even when it stays quiet
+    NotifRec rec;
+    strlcpy(rec.title, title, sizeof(rec.title));
+    strlcpy(rec.body, body, sizeof(rec.body));
+    strlcpy(rec.icon, icon_name, sizeof(rec.icon));
+    rec.stamp = rtc_stamp();
+    if (notif_hist.len >= 60) { notif_hist.remove(0); if (notif_seen > 0) notif_seen--; }
+    notif_hist.push(rec);
+    damage({0, 0, SW, TOPBAR_H});
+    if (settings.dnd || notif_muted(icon_name)) return;
     Toast t;
     strlcpy(t.title, title, sizeof(t.title));
     strlcpy(t.body, body, sizeof(t.body));

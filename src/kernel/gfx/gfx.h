@@ -131,7 +131,8 @@ void  image_free(Image& img);
 // decode PNG / GIF / JPEG (baseline + progressive) / BMP into ARGB; img.px is kmalloc'd
 bool image_load(const u8* data, u32 len, Image& img);
 const char* image_format(const u8* data, u32 len);   // "png", "jpeg", ... or nullptr
-void image_shrink(Image& img, int maxw, int maxh);    // box filter, keeps the aspect ratio
+void image_shrink(Image& img, int maxw, int maxh);
+u8*  image_encode_bmp(const Image& img, u32* len);    // 24-bit BMP, kmalloc'd (nullptr when out of memory)    // box filter, keeps the aspect ratio
 
 // whole-buffer inflate (imgdec.cpp): kmalloc'd result, nullptr on failure
 u8* zlib_decompress(const u8* in, u32 inlen, u32* outlen, u32 max_out);      // with the 2-byte zlib header
