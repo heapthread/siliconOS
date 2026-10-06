@@ -25,7 +25,7 @@ struct GamesApp : App {
     bool resizable() override { return false; }
 
     struct G { const char* id; const char* name; const char* desc; };
-    static const int NG = 7;
+    static const int NG = 17;
     G games[NG] = {
         {"stacker", "Stacker", "stack falling blocks, clear lines"},
         {"g2048", "2048", "slide matching chips together"},
@@ -34,6 +34,16 @@ struct GamesApp : App {
         {"minesweeper", "Minesweeper", "flag the mines, clear the board"},
         {"snake", "Snake", "eat the bits, avoid your tail"},
         {"reversi", "Reversi", "outflank the silicon AI"},
+        {"pong", "Pong", "first to seven loses"},
+        {"invaders", "Invaders", "hold back the alien grid"},
+        {"asteroids", "Asteroids", "thrust, turn and blast"},
+        {"runner", "Runner", "jump the pins, run forever"},
+        {"connect4", "Connect Four", "line up four discs"},
+        {"memory", "Memory", "find all the pairs"},
+        {"wordy", "Wordy", "guess the hidden word"},
+        {"sudoku", "Sudoku", "fill the grid"},
+        {"solitaire", "Solitaire", "classic Klondike"},
+        {"chess", "Chess", "play white against silicon"},
     };
     Smooth sc;
     ScrollBar sb;
@@ -65,7 +75,7 @@ struct GamesApp : App {
         c.hline(0, 34, w, th::border);
         c.blit(icon("games")->small, 12, 9);
         c.text(36, 11, "game library", th::text, 1, true);
-        c.text(w - 140, 11, "7 games installed", th::muted);
+        { char gb[32]; snprintf(gb, sizeof(gb), "%d games installed", NG); c.text(w - text_width(gb) - 14, 11, gb, th::muted); }
     }
     void on_mouse(const MouseEv& e) override {
         int off = sc.target;

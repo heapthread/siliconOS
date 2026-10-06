@@ -130,6 +130,7 @@ struct HttpRequest {
     u8* body; u32 body_len;
     int redirects;
     char accept[96];
+    char ua[80];
     char tlsv[12];
 };
 
@@ -168,6 +169,7 @@ HttpRequest* http_get(const char* url, const char* method, const char* body, con
     r->buf = (u8*)kmalloc(r->cap);
     r->sock = -1;
     strlcpy(r->accept, "text/html,text/plain,*/*", sizeof(r->accept));
+    strlcpy(r->ua, "Mozilla/5.0 (silicon; x86_64) Beam/0.2", sizeof(r->ua));
     start(r, url);
     return r;
 }
@@ -303,9 +305,9 @@ int http_step(HttpRequest* r) {
         if ((!strcmp(r->u.scheme, "http") && r->u.port != 80) || (!strcmp(r->u.scheme, "https") && r->u.port != 443))
             snprintf(port, sizeof(port), ":%u", r->u.port);
         int n = snprintf(req, sizeof(req),
-                         "%s %s HTTP/1.1\r\nHost: %s%s\r\nUser-Agent: Mozilla/5.0 (silicon; x86_64) Beam/0.2\r\n"
+                         "%s %s HTTP/1.1\r\nHost: %s%s\r\nUser-Agent: %s\r\n"
                          "Accept: %s\r\nAccept-Encoding: identity\r\nConnection: close\r\n",
-                         r->method, r->u.path, r->u.host, port, r->accept);
+                         r->method, r->u.path, r->u.host, port, r->ua, r->accept);
         if (r->req_body) n += snprintf(req + n, sizeof(req) - n, "Content-Type: %s\r\nContent-Length: %u\r\n", r->req_ctype, (u32)strlen(r->req_body));
         n += snprintf(req + n, sizeof(req) - n, "\r\n");
         bool ok = r->tls ? tls_send(r->tls, req, n) : tcp_send(r->sock, req, n);
@@ -367,6 +369,7 @@ int http_step(HttpRequest* r) {
 
 int http_status(HttpRequest* r) { return r->status; }
 void http_set_accept(HttpRequest* r, const char* accept) { strlcpy(r->accept, accept, sizeof(r->accept)); }
+void http_set_user_agent(HttpRequest* r, const char* ua) { strlcpy(r->ua, ua, sizeof(r->ua)); }
 const char* http_error(HttpRequest* r) { return r->err; }
 const char* http_final_url(HttpRequest* r) { return r->url; }
 const char* http_content_type(HttpRequest* r) { return r->ctype; }

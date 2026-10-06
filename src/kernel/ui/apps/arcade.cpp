@@ -368,7 +368,7 @@ struct AsteroidsApp : GameApp {
 
 // ================================================================ Runner
 struct RunnerApp : GameApp {
-    static const int W = 580, H = 250, FT = 34, GROUND = H - 40;
+    static const int W = 580, H = 250, FT = 34, GROUND = H - FT - 40;
     struct Obs { float x; int w, h; bool on; };
     Obs obs[6];
     float y = 0, vy = 0, speed = 5, dist = 0, next_gap = 0;

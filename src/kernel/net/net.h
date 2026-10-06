@@ -85,6 +85,7 @@ HttpRequest* http_get(const char* url, const char* method = "GET", const char* b
 int   http_step(HttpRequest* r);      // returns the phase; call every tick until DONE/ERROR
 int   http_status(HttpRequest* r);
 void  http_set_accept(HttpRequest* r, const char* accept);   // before the first http_step
+void  http_set_user_agent(HttpRequest* r, const char* ua);   // before the first http_step
 const char* http_error(HttpRequest* r);
 const char* http_final_url(HttpRequest* r);
 const char* http_content_type(HttpRequest* r);

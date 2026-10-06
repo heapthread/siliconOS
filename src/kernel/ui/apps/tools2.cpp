@@ -25,7 +25,7 @@ struct CaptureApp : App {
     ~CaptureApp() { if (preview.px) kfree(preview.px); }
     const char* app_id() override { return "capture"; }
     const char* title() override { return "Capture"; }
-    int pref_w() override { return 380; }
+    int pref_w() override { return 440; }
     int pref_h() override { return 320; }
     bool resizable() override { return false; }
 
@@ -138,8 +138,9 @@ struct WeatherApp : App {
         if (req) http_free(req);
         char enc[200], url[400];
         url_encode(city.text, enc, sizeof(enc));
-        snprintf(url, sizeof(url), "http://wttr.in/%s?format=%%25l|%%25C|%%25t|%%25f|%%25w|%%25h|%%25p|%%25P|%%25S|%%25s", enc);
+        snprintf(url, sizeof(url), "http://wttr.in/%s?format=%%l|%%C|%%t|%%f|%%w|%%h|%%p|%%P|%%S|%%s", enc);
         req = http_get(url);
+        http_set_user_agent(req, "curl/8.5.0 (silicon)");
         t0 = ticks();
         have = false;
         strlcpy(status, "fetching" G_ELLIP, sizeof(status));
@@ -176,7 +177,7 @@ struct WeatherApp : App {
             if (*e != '|') break;
             p = e + 1;
         }
-        if (n < 8 || status_code >= 400) { snprintf(status, sizeof(status), "no forecast for that place"); return; }
+        if (n < 8 || status_code >= 400) { snprintf(status, sizeof(status), "no forecast for that place (http %d)", status_code); return; }
         have = true;
         status[0] = 0;
     }
@@ -212,7 +213,7 @@ struct WeatherApp : App {
             c.text_n(x + 8, y + 22, fields[3 + i], 15, th::white, 1, true);
         }
         char b[100];
-        snprintf(b, sizeof(b), "%s / %s", fields[8], fields[9]);
+        snprintf(b, sizeof(b), "%.5s / %.5s", fields[8], fields[9]);
         int x = 20 + 2 * 136, y = BAR + 180 + 52;
         c.fill(x, y, 128, 44, 0xFF26385C);
         c.text(x + 8, y + 6, labels[5], 0xFF8AA0D0);
