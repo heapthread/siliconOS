@@ -24,6 +24,7 @@ struct Settings {
     char pass[72];           // salted sha256 of the password ("" = none)
     int  sleep_min;          // idle minutes before the screen sleeps (0 = never)
     int  saver_min;          // idle minutes before the screensaver (0 = never)
+    int  kbd_layout;         // index into the keyboard layouts (drv/kbd.cpp)
     bool dnd;                // do not disturb: no pop-ups or sounds for notifications
     char muted[96];          // comma list of notification sources (icon names) that stay quiet
 };

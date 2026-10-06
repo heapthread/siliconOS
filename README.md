@@ -56,6 +56,10 @@ on QEMU's user-mode network, so the internet works with no setup.
 | desktop | `src/kernel/ui/` | compositor with damage tracking and per-window surfaces, window manager with animations, snapping and overview, top bar, the silicon-die dock, launcher, alt-tab, notifications, screensaver |
 | web | `src/kernel/ui/html.cpp`, `css.cpp`, `apps/browser.cpp` | HTML tokenizer and flow layout; a CSS engine (selectors, cascade, `!important`, `@media`, custom properties) for display, colours, backgrounds, borders, fonts, margins, padding and centred columns; the Beam browser |
 | images | `src/kernel/gfx/imgdec.cpp` | PNG (with its own inflate), GIF, JPEG (baseline and progressive) and BMP decoders |
+| fonts | `src/kernel/gfx/vfont.cpp`, `art/fonts/` | scalable fonts: the PDF engine's TrueType parser and rasterizer draw DejaVu Sans (regular and bold, embedded in the kernel) at any size, with a glyph cache |
+| keyboard | `src/kernel/drv/kbd.cpp` | layouts (US, UK, German, French, Spanish, Dvorak) with AltGr and dead keys; every key press carries a Unicode code point |
+| modules and SDK | `sdk/`, `src/kernel/ui/apps/module.cpp` | third-party apps (`.sapp`) built against a stable function table (`sdk/silicon.h`) and loaded by the kernel |
+| firewall | `src/kernel/net/fw.cpp` | a stateless packet filter on the IP layer, and the HTTP proxy setting |
 | pdf | `src/kernel/pdf/` | a PDF reader: object parser (xref tables and streams, object streams, repair of broken files), filters (Flate, LZW, ASCII85, ASCIIHex, RunLength, predictors), an anti-aliased rasterizer with stroking, dashes and clipping, colour spaces and functions, shadings, images, TrueType / CFF / Type 1 font parsers with a bitmap-font fallback, annotations and text extraction. `tools/pdftest/` is a host harness that renders a PDF to a PPM |
 | art | `tools/make_art.py`, `tools/assets.py` | generates silicon's own icons and wallpapers; every PNG is packed into a compressed `.sil` blob linked into the kernel |
 | font | `tools/font.txt` | silicon's own 8x12 pixel font, hand-drawn as ASCII art |
@@ -80,7 +84,9 @@ on QEMU's user-mode network, so the internet works with no setup.
   - Drag a window to the left or right edge to snap it to half the screen, or to the top to maximize.
 - **Overview** (F3) shows every window at once. **Alt+tab** shows live thumbnails.
 - **Scrolling**: the mouse wheel scrolls smoothly everywhere, and scrollbars can be dragged.
-- **Clipboard**: copies inside silicon also go to the host clipboard and host copies come back in. It carries text, including emoji. Files has its own file clipboard.
+- **Clipboard**: copies inside silicon also go to the host clipboard and host copies come back in. It carries text (including emoji), pictures (Photos and Capture copy them, Photos and Files paste them) and lists of files (Files copy/cut/paste; the paths are also on the clipboard as text).
+- **Drag and drop**: drag desktop icons anywhere (they snap to a grid and keep their place in `~/.config/desktop`), or drag files and folders from the desktop or Files onto another window: Terminal pastes the path, Slate, Write, Photos, PDF, Docs, Hex, Beam and Archive open it, Wallpapers uses a picture, Calendar imports an `.ics`, Files moves it, and the Trash or the dock's trash can deletes it.
+- **Notifications**: every notification is kept in the notification centre (the bell in the top bar). Do not disturb silences pop-ups and sounds, and any app can be muted from the list.
 - **Desktop icons** show what's in `/home`. Double-click to open; right-click for a menu.
 - **Screensaver**: after 5 idle minutes (or from the system menu), a warp through stars and chips.
 
@@ -108,11 +114,16 @@ on QEMU's user-mode network, so the internet works with no setup.
 - **Photos**: a gallery of every picture in SiliconFS and a viewer (fit, zoom, pan, next/previous).
 - **Terminal**: select with the mouse (double-click a word, triple-click a line), `ctrl+shift+c` (or `ctrl+c` while something is selected) copies, `ctrl+v` pastes, right-click for a menu, and emoji show up as pictures.
 - **Files**: multi-select with ctrl-click, shift-click, a rubber band or `ctrl+a`; copy, cut and paste files with `ctrl+c` / `ctrl+x` / `ctrl+v`; drag several items at once.
+- **Apps** lists every app, utility and game in one searchable grid (it's in the dock).
+- **Write**: a Unicode text editor with scalable fonts, sizes from 10 to 72, bold, right-to-left text (Hebrew, and Arabic with letter shaping and bidirectional ordering), UTF-8 files and a keyboard menu for the layouts. Not supported: ligatures other than Arabic lam-alef, CJK (the font has no glyphs for it) and complex scripts such as Devanagari.
+- **Docs**: reads Word (`.docx`), OpenDocument (`.odt`, `.ods`) and Excel (`.xlsx`) files and CSV/TSV as pages and grids, read-only, with "save as text / csv".
+- **Mail**: POP3 receive and SMTP send (plain or implicit TLS), RFC 2047 headers, quoted-printable and base64 bodies, one account. TLS certificates are not verified, and the password is stored unencrypted in `~/.config/mail`.
+- **Firewall**: packet filter rules (allow or deny, inbound or outbound, protocol, port, address), a log of what was blocked, and an HTTP proxy setting used by Beam, wget and curl.
 - **Slate** (text editor), **Pixel** (pixel painter), **Calculator**, **Monitor**, **Settings**, **Wallpapers**,
   **Clock**, **Piano** (two octaves on the PC speaker, with recording and a demo tune), **Emoji** (a picker
   that copies to the clipboard), **Trash** and **About**.
 - **Utilities**:
-  - **Calendar**: month view with events saved in `~/.config/calendar`.
+  - **Calendar**: month view with events saved in `~/.config/calendar`; imports `.ics` files, subscribes to an `.ics` address (Sync now) and exports everything.
   - **Tasks**: a to-do list.
   - **Hex**: a hex viewer for any file.
   - **Storage**: what fills the disk, by folder and the largest files.
@@ -127,6 +138,16 @@ on QEMU's user-mode network, so the internet works with no setup.
   - Arcade: Stacker (falling blocks with hold and a ghost piece), 2048, Breakout (power-ups and five level layouts), Flappy Chip, Snake, Pong, Invaders, Asteroids and Runner.
   - Boards and cards: Minesweeper, Reversi, Connect Four, Memory, Sudoku, Solitaire (Klondike) and Chess (you play white against a small alpha-beta engine; castling, en passant and promotion to a queen are supported).
   - Words: Wordy.
+
+## Writing apps for silicon
+
+`sdk/` has everything needed to build an app module: `silicon.h` (the function table: drawing, files, clipboard, notifications, timing, memory), `build_app.py`, and an example in `sdk/examples/hello`.
+
+```bash
+python sdk/build_app.py sdk/examples/hello/main.cpp -o hello.sapp
+```
+
+Copy the `.sapp` into silicon (`wget` it, or put it on the disk image) and open it from Files or with `open hello.sapp`. The example is also built into the kernel and installed as `/home/apps/hello.sapp`. Modules run in the kernel's address space and can crash the system or read anything, so only run modules you trust; real processes and memory protection are still to do.
 
 ## Shells
 
@@ -148,9 +169,14 @@ Type `help` for the full list. Some highlights:
 ```
 ls -l   tree   cat   edit notes/todo.txt   echo hi > file.txt   grep todo notes/todo.txt | sort | uniq
 fetch   cal   mem   df   theme amber   zoom   wallpaper 2   chipsay hello   snake   rain   life
+kbd de   (keyboard layout)
 ifconfig   ping example.com   nslookup wikipedia.org   curl -I https://example.com
 wget -O /home/pictures/cat.jpg https://...   netstat   lspci   setup   ui   reboot   shutdown
 ```
+
+## Third-party fonts
+
+DejaVu Sans and DejaVu Sans Bold (`art/fonts`) are free fonts derived from Bitstream Vera, distributed under the Bitstream Vera / DejaVu licence, which allows embedding and redistribution with the licence notice (https://dejavu-fonts.github.io/License.html).
 
 ## Art credits
 

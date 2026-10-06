@@ -37,6 +37,7 @@ ICONS = [
     ("photos", "silicon/icons/photos.png"), ("piano", "silicon/icons/piano.png"),
     ("pdf", "silicon/icons/pdf.png"),
     ("sapp", "silicon/icons/module.png"),
+    ("write", "silicon/icons/write.png"),
     ("calendar", "silicon/icons/calendar.png"),
     ("tasks", "silicon/icons/tasks.png"),
     ("hex", "silicon/icons/hex.png"),
@@ -149,6 +150,9 @@ def main():
     for name, rel in WALLPAPERS:
         entries.append(("wall/" + name, rel, False))
     entries.append(("emoji/sheet", "silicon/emoji.png", "raw"))
+    for fname in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"):
+        if os.path.exists(os.path.join(ART, "fonts", fname)):
+            entries.append(("font/" + fname[:-4], os.path.join("fonts", fname), "bin"))
     sapp_dir = os.path.join(gen, "sapp")
     if os.path.isdir(sapp_dir):
         for f in sorted(os.listdir(sapp_dir)):

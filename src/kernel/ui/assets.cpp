@@ -7,6 +7,12 @@ struct AssetEntry { const char* name; const u8* data; u64 len; };
 extern "C" AssetEntry asset_table[];
 extern "C" u64 asset_count;
 
+const u8* asset_find(const char* name, u32* len) {
+    for (u64 i = 0; i < asset_count; i++)
+        if (!strcmp(asset_table[i].name, name)) { if (len) *len = (u32)asset_table[i].len; return asset_table[i].data; }
+    return nullptr;
+}
+
 static Vec<Icon*> icons;
 static Vec<Wallpaper*> walls;
 
@@ -36,7 +42,7 @@ void ui_preload() {
     if (icons.len) return;
     for (u64 i = 0; i < asset_count; i++) {
         AssetEntry& e = asset_table[i];
-        if (str_starts(e.name, "sapp/")) continue;       // app modules, see modules_install_samples()
+        if (str_starts(e.name, "sapp/") || str_starts(e.name, "font/")) continue;       // app modules, see modules_install_samples()
         Image img;
         if (!image_decode(e.data, (u32)e.len, img)) { klog("asset %s: bad data\n", e.name); continue; }
         if (str_starts(e.name, "icon/")) {

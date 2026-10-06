@@ -7,6 +7,8 @@ const AppInfo app_infos[] = {
     {"notifications", "Notifications", "history and do not disturb", true, false},
     {"firewall", "Firewall", "packet filter and proxy", true, false},
     {"docs", "Docs", "word, spreadsheet and csv reader", false, false},
+    {"write", "Write", "unicode text with scalable fonts", false, false},
+    {"mail", "Mail", "pop3 and smtp email", true, false},
     {"files", "Files", "browse SiliconFS", false, true},
     {"browser", "Beam", "web browser", false, true},
     {"slate", "Slate", "text editor", false, true},
@@ -68,7 +70,7 @@ static App* create(const char* id, const char* arg) {
         {"minesweeper", new_minesweeper}, {"snake", new_snake}, {"reversi", new_reversi},
         {"trash", new_trash}, {"power", new_power}, {"browser", new_browser},
         {"stacker", new_stacker}, {"g2048", new_g2048}, {"breakout", new_breakout}, {"flappy", new_flappy},
-        {"photos", new_photos}, {"piano", new_piano}, {"emoji", new_emoji}, {"pdfview", new_pdfview}, {"apps", new_apps}, {"notifications", new_notifications}, {"firewall", new_firewall}, {"docs", new_docs},
+        {"photos", new_photos}, {"piano", new_piano}, {"emoji", new_emoji}, {"pdfview", new_pdfview}, {"apps", new_apps}, {"notifications", new_notifications}, {"firewall", new_firewall}, {"docs", new_docs}, {"write", new_write}, {"mail", new_mail},
         {"pong", new_pong}, {"invaders", new_invaders}, {"asteroids", new_asteroids}, {"runner", new_runner}, {"connect4", new_connect4}, {"memory", new_memory}, {"wordy", new_wordy}, {"sudoku", new_sudoku}, {"solitaire", new_solitaire}, {"chess", new_chess}, {"calendar", new_calendar}, {"tasks", new_tasks}, {"hex", new_hex}, {"storage", new_storage}, {"convert", new_convert}, {"palette", new_palette}, {"capture", new_capture}, {"weather", new_weather}, {"typing", new_typing}, {"network", new_network}, {"archive", new_archive},
     };
     for (auto& t : table) if (!strcmp(t.id, id)) return t.fn(arg);

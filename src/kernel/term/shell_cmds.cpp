@@ -626,6 +626,24 @@ static void theme(Shell& sh, int argc, char** argv) {
     sh.outf(C_BRED "unknown theme %s\n" C_RESET, argv[1]);
 }
 
+static void kbd(Shell& sh, int argc, char** argv) {
+    if (argc < 2) {
+        sh.out("keyboard layouts:");
+        for (int i = 0; i < kbd_layout_count(); i++)
+            sh.outf(" %s%s" C_RESET, i == settings.kbd_layout ? C_BMAG C_BOLD : "", kbd_layout_name(i));
+        sh.out("\nusage: kbd <name>      (AltGr and dead keys work in the layouts that have them)\n");
+        return;
+    }
+    for (int i = 0; i < kbd_layout_count(); i++)
+        if (!strcmp(argv[1], kbd_layout_name(i))) {
+            settings.kbd_layout = i;
+            settings_save();
+            sh.outf("keyboard: %s\n", kbd_layout_label(i));
+            return;
+        }
+    sh.outf(C_BRED "unknown layout %s\n" C_RESET, argv[1]);
+}
+
 static void zoom(Shell& sh, int, char**) {
     if (sh.host->host_is_ui()) { sh.out("zoom works in the full-screen terminal\n"); return; }
     sh.host->shell_request(&sh, SR_ZOOM, nullptr);
@@ -952,6 +970,7 @@ const Command commands[] = {
     {"user", "[name]", "show or set user name", ShellCommands::user},
     {"hostname", "[name]", "show or set host name", ShellCommands::hostname},
     {"theme", "[name]", "terminal color theme", ShellCommands::theme},
+    {"kbd", "[layout]", "keyboard layout (us uk de fr es dvorak)", ShellCommands::kbd},
     {"zoom", "", "toggle big terminal font", ShellCommands::zoom},
     {"colors", "", "show the palette", ShellCommands::colors},
     {"wallpaper", "[name]", "list or set the wallpaper", ShellCommands::wallpaper},

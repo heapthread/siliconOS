@@ -38,7 +38,11 @@ struct KeyEvent {
     char ch;         // translated character (0 if none)
     bool down;
     bool shift, ctrl, alt;
+    u32  cp;         // the Unicode code point of the key (accented letters of the active layout included), 0 if none
 };
+int  kbd_layout_count();
+const char* kbd_layout_name(int i);     // "us", "de", ... (what the shell command takes)
+const char* kbd_layout_label(int i);    // "English (US)", "Deutsch", ...
 void kbd_init();
 bool kbd_poll(KeyEvent& ev);
 bool kbd_shift_down();                   // live modifier state (for mouse handlers)

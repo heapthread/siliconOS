@@ -32,6 +32,8 @@ App* new_apps(const char* arg);
 App* new_notifications(const char* arg);
 App* new_firewall(const char* arg);
 App* new_docs(const char* arg);
+App* new_write(const char* arg);
+App* new_mail(const char* arg);
 bool is_office_name(const char* name);   // .docx .odt .xlsx .ods .csv .tsv (docs.cpp)
 App* new_module(const char* path);        // an SDK app module (.sapp), see sdk/
 void modules_install_samples();

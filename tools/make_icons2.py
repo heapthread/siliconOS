@@ -5,7 +5,7 @@ from PIL import ImageDraw
 
 NAMES = ["calendar", "tasks", "hex", "storage", "convert", "palette", "capture", "weather", "typing", "network",
          "archive", "pong", "invaders", "asteroids", "runner", "connect4", "memory", "wordy", "sudoku",
-         "solitaire", "chess", "emoji", "apps", "notifications", "firewall", "docs", "mail", "fonts", "module"]
+         "solitaire", "chess", "emoji", "apps", "notifications", "firewall", "docs", "mail", "fonts", "module", "write"]
 
 DARK = (30, 26, 52, 255)
 RED = (229, 72, 106, 255)
@@ -296,6 +296,18 @@ def icon_module():
     rect(d, 7, 7, 15, 15, TEAL); rect(d, 17, 7, 25, 15, VIOLET_LT)
     rect(d, 7, 17, 15, 25, GOLD); rect(d, 17, 17, 25, 25, PINK)
     rect(d, 14, 14, 18, 18, WHITE)
+    return im
+
+
+def icon_write():
+    im = new(); d = ImageDraw.Draw(im)
+    rect(d, 5, 3, 24, 28, WHITE)
+    rect(d, 8, 7, 21, 8, VIOLET_DK)
+    rect(d, 8, 11, 19, 12, GREY)
+    rect(d, 8, 15, 21, 16, GREY)
+    rect(d, 8, 19, 15, 20, GREY)
+    d.polygon([(26, 14), (29, 17), (17, 29), (14, 29), (14, 26)], fill=GOLD)
+    d.polygon([(14, 26), (17, 29), (13, 30)], fill=INK)
     return im
 
 
