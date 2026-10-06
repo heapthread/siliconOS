@@ -647,6 +647,45 @@ struct BrowserApp : App {
         int status = http_status(req);
         bool html = !ct[0] || str_icontains(ct, "html");
         bool text = html || str_icontains(ct, "text/") || str_icontains(ct, "json") || str_icontains(ct, "xml") || str_icontains(ct, "javascript");
+        bool is_pdf = str_icontains(ct, "pdf") || (len > 5 && !memcmp(body, "%PDF-", 5));
+        if (is_pdf && status < 400) {
+            // save the document and hand it to the PDF viewer
+            char base[FS_NAME_MAX] = "document.pdf";
+            const char* u = url;
+            const char* q = strchr(u, '?');
+            int ulen = q ? (int)(q - u) : (int)strlen(u);
+            int st = ulen;
+            while (st > 0 && u[st - 1] != '/') st--;
+            if (ulen - st > 0 && ulen - st < (int)sizeof(base) - 5) {
+                memcpy(base, u + st, ulen - st);
+                base[ulen - st] = 0;
+                if (!str_icontains(base, ".pdf")) strlcat(base, ".pdf", sizeof(base));
+            }
+            fs_mkdirs("/home/downloads");
+            char name[FS_NAME_MAX];
+            fs_unique_name(fs_lookup("/home/downloads"), base, name, sizeof(name));
+            char path[200];
+            snprintf(path, sizeof(path), "/home/downloads/%s", name);
+            FsNode* f = fs_create_path(path, false);
+            char page[600];
+            if (f && fs_write(f, body, len)) {
+                snprintf(page, sizeof(page), "<html><head><title>%s</title></head><body><h2>%s</h2>"
+                         "<p>This is a PDF. It was saved to <code>%s</code> and opened in the PDF viewer.</p></body></html>", name, name, path);
+                set_source(page, strlen(page), false);
+                http_free(req);
+                req = nullptr;
+                set_title(title());
+                open_path(path);
+                return;
+            }
+            snprintf(page, sizeof(page), "<html><head><title>download</title></head><body><h2>couldn't save the PDF</h2>"
+                     "<p>there is no room for it in SiliconFS.</p></body></html>");
+            set_source(page, strlen(page), false);
+            http_free(req);
+            req = nullptr;
+            set_title(title());
+            return;
+        }
         if (!text) {
             char page[800];
             snprintf(page, sizeof(page), "<html><head><title>download</title></head><body><h2>this isn't a web page</h2>"
