@@ -607,6 +607,23 @@ accept: {
     }
 }
 
+void Shell::paste(const char* text) {
+    if (prog || searching) return;
+    for (; *text && *text != '\n' && *text != '\r'; text++) {
+        u8 ch = (u8)*text;
+        int n = 1;
+        if (ch == 1 || ch == 2) { if (!text[1]) break; n = 2; }      // an emoji is a lead byte plus an index byte
+        else if (ch < 32 || ch == 127) continue;
+        if (len + n >= 250) break;
+        memmove(line + cur + n, line + cur, len - cur + 1);
+        for (int k = 0; k < n; k++) line[cur + k] = text[k];
+        cur += n; len += n;
+        text += n - 1;
+    }
+    con->scroll_reset();
+    redraw();
+}
+
 void Shell::tick() {
     if (prog) {
         prog->tick();

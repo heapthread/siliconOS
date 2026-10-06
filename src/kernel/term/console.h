@@ -59,6 +59,16 @@ public:
     int  scroll_offset() const { return top() - view_off; }
     void scroll_to(int offset) { view_off = clamp(top() - offset, 0, top()); dirty = true; }
 
+    // text selection (mouse): positions are visible-screen coordinates
+    bool has_sel() const { return sel_on && (sel_al != sel_bl || sel_ac != sel_bc); }
+    void sel_begin(int col, int row);
+    void sel_update(int col, int row);
+    void sel_clear() { if (sel_on) { sel_on = false; dirty = true; } }
+    void sel_word(int col, int row);
+    void sel_line(int row);
+    void sel_all();
+    int  sel_text(char* out, int cap);       // the selected text (silicon codepage, newline separated)
+
     // pixel size and rendering
     int  cell_w() const { return FONT_W * scale; }
     int  cell_h() const { return FONT_H * scale; }
@@ -76,6 +86,9 @@ private:
     i64 dropped = 0;
     int esc = 0;            // ANSI parse state
     int esc_val = 0, esc_vals[4], esc_n = 0;
+    bool sel_on = false;
+    int sel_al = 0, sel_ac = 0, sel_bl = 0, sel_bc = 0;   // anchor and cursor: buffer line + column
+    bool in_sel(int li, int col) const;
 
     int  top() const { return max(0, used - rows); }
     Cell* line(int i) { return buf + i * cols; }

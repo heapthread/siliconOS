@@ -1,5 +1,6 @@
 // silicon - text console
 #include "console.h"
+#include "../text.h"
 
 // palette order: 0 bg, 1 red, 2 green, 3 yellow, 4 blue, 5 magenta, 6 cyan, 7 text,
 //                8 gray, 9..15 bright variants
@@ -59,6 +60,7 @@ void Console::newline() {
     if (cy >= lines) {
         // drop the oldest line
         memmove(buf, buf + cols, sizeof(Cell) * cols * (lines - 1));
+        if (sel_on) { sel_al--; sel_bl--; if (sel_al < 0 || sel_bl < 0) sel_on = false; }
         cy = lines - 1;
         used = lines;
         dropped++;
@@ -175,6 +177,68 @@ void Console::set_cursor_abs(i64 l, int col) {
     dirty = true;
 }
 
+// ---- selection
+bool Console::in_sel(int li, int col) const {
+    if (!sel_on) return false;
+    int l0 = sel_al, c0 = sel_ac, l1 = sel_bl, c1 = sel_bc;
+    if (l1 < l0 || (l1 == l0 && c1 < c0)) { swap(l0, l1); swap(c0, c1); }
+    if (li < l0 || li > l1) return false;
+    if (li == l0 && col < c0) return false;
+    if (li == l1 && col > c1) return false;
+    return true;
+}
+void Console::sel_begin(int col, int row) {
+    sel_on = true;
+    sel_al = sel_bl = clamp(top() - view_off + row, 0, used - 1);
+    sel_ac = sel_bc = clamp(col, 0, cols - 1);
+    dirty = true;
+}
+void Console::sel_update(int col, int row) {
+    if (!sel_on) return;
+    sel_bl = clamp(top() - view_off + row, 0, used - 1);
+    sel_bc = clamp(col, 0, cols - 1);
+    dirty = true;
+}
+void Console::sel_word(int col, int row) {
+    int li = clamp(top() - view_off + row, 0, used - 1);
+    Cell* l = line(li);
+    col = clamp(col, 0, cols - 1);
+    auto word = [&](int x) { u8 ch = l[x].ch; return ch > ' ' && ch != '|' && ch != ';' && ch != '(' && ch != ')'; };
+    int a = col, b = col;
+    if (word(col)) {
+        while (a > 0 && word(a - 1)) a--;
+        while (b < cols - 1 && word(b + 1)) b++;
+    }
+    sel_on = true; sel_al = sel_bl = li; sel_ac = a; sel_bc = b;
+    dirty = true;
+}
+void Console::sel_line(int row) {
+    int li = clamp(top() - view_off + row, 0, used - 1);
+    sel_on = true; sel_al = sel_bl = li; sel_ac = 0; sel_bc = cols - 1;
+    dirty = true;
+}
+void Console::sel_all() {
+    sel_on = true; sel_al = 0; sel_ac = 0; sel_bl = used - 1; sel_bc = cols - 1;
+    dirty = true;
+}
+int Console::sel_text(char* out, int cap) {
+    int n = 0;
+    out[0] = 0;
+    if (!sel_on) return 0;
+    int l0 = sel_al, c0 = sel_ac, l1 = sel_bl, c1 = sel_bc;
+    if (l1 < l0 || (l1 == l0 && c1 < c0)) { swap(l0, l1); swap(c0, c1); }
+    for (int li = l0; li <= l1 && li < used; li++) {
+        int a = li == l0 ? c0 : 0, b = li == l1 ? c1 : cols - 1;
+        Cell* l = line(li);
+        int last = b;
+        while (last >= a && l[last].ch == ' ') last--;      // trim trailing blanks
+        for (int x = a; x <= last && n < cap - 2; x++) out[n++] = (char)(l[x].ch ? l[x].ch : ' ');
+        if (li < l1 && n < cap - 2) out[n++] = '\n';
+    }
+    out[n] = 0;
+    return n;
+}
+
 void Console::scroll_view(int n) {
     view_off = clamp(view_off + n, 0, top());
     dirty = true;
@@ -191,7 +255,19 @@ void Console::render(Canvas& c, int x0, int y0, bool focused) {
         for (int col = 0; col < cols; col++) {
             Cell& cell = l[col];
             int px = x0 + col * cw, py = y0 + r * ch;
-            if (cell.bg) c.fill(px, py, cw, ch, color(cell.bg));
+            bool sel = sel_on && in_sel(li, col);
+            if (sel) c.fill(px, py, cw, ch, blend(color(0), color(4), 150));
+            else if (cell.bg) c.fill(px, py, cw, ch, color(cell.bg));
+            if (is_emoji_lead(cell.ch) && col + 1 < cols) {
+                // an emoji takes two cells: the lead byte and the sprite index
+                const Image* sp = emoji_sprite(emoji_from_bytes(cell.ch, l[col + 1].ch), scale > 1 ? 16 : 12);
+                if (sp) {
+                    c.blit(*sp, px + (2 * cw - sp->w) / 2, py + (ch - sp->h) / 2);
+                    if (sel_on && in_sel(li, col + 1)) c.fill(px + cw, py, cw, ch, blend(color(0), color(4), 150));
+                    col++;
+                    continue;
+                }
+            }
             if (cell.ch != ' ') c.draw_char(px, py, cell.ch, color(cell.fg), scale, cell.attr & 1);
         }
     }

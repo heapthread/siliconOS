@@ -29,6 +29,7 @@ public:
     void banner();
     void start_prompt() { prompt(); }
     void on_key(const KeyEvent& e);
+    void paste(const char* text);          // insert pasted text at the cursor (first line only)
     void tick();
     void run_line(const char* line);       // execute a full command line (pipes, ;, &&, ||)
     bool busy() const { return prog != nullptr; }

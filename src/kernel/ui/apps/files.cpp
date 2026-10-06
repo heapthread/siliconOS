@@ -4,7 +4,13 @@
 enum {
     F_OPEN = 1, F_RENAME, F_TRASH, F_DUP, F_NEW_FOLDER, F_NEW_FILE, F_CLOSE, F_VIEW_ICONS, F_VIEW_LIST,
     F_GO_HOME, F_GO_NOTES, F_GO_PICS, F_GO_ROOT, F_GO_TRASH, F_GO_UP, F_TERMINAL_HERE, F_WALLPAPER,
+    F_COPY, F_CUT, F_PASTE, F_SELALL,
 };
+
+// the file clipboard: paths copied or cut in any Files window
+static Vec<char*> g_fclip;
+static bool g_fclip_cut = false;
+static void fclip_clear() { for (int i = 0; i < g_fclip.len; i++) kfree(g_fclip[i]); g_fclip.clear(); }
 
 static const int TOOLBAR_H = 34, SIDEBAR_W = 132, STATUS_H = 20;
 
@@ -26,6 +32,10 @@ struct FilesApp : App {
     char path[256] = "/home";
     Vec<char*> back;
     int sel = -1;
+    Vec<FsNode*> multi;          // the whole selection when more than one item is picked (empty = just `sel`)
+    int anchor = 0;
+    bool marquee = false, press_multi = false;
+    int mq_x0 = 0, mq_y0 = 0, mq_x1 = 0, mq_y1 = 0;
     Smooth sc;
     ScrollBar sb;
     bool list_view = false;
@@ -35,7 +45,7 @@ struct FilesApp : App {
     int press_x = 0, press_y = 0, press_item = -1;
 
     FilesApp(const char* arg) { if (arg) strlcpy(path, arg, sizeof(path)); }
-    ~FilesApp() { for (int i = 0; i < back.len; i++) kfree(back[i]); back.free(); }
+    ~FilesApp() { for (int i = 0; i < back.len; i++) kfree(back[i]); back.free(); multi.free(); }
 
     const char* app_id() override { return "files"; }
     char tbuf[64];
@@ -61,6 +71,7 @@ struct FilesApp : App {
         if (remember && strcmp(p, path)) back.push(strdup(path));
         fs_path(n, path, sizeof(path));
         sel = -1;
+        multi.clear();
         sc.jump(0);
         retitle();
         ui_invalidate();
@@ -76,6 +87,88 @@ struct FilesApp : App {
     void go_up() {
         FsNode* d = dir();
         if (d->parent) { char p[256]; fs_path(d->parent, p, sizeof(p)); go(p); }
+    }
+
+    // ------------------------------------------------------------ selection
+    bool picked_has(FsNode* n) {
+        if (multi.len) return multi.find(n) >= 0;
+        FsNode* d = dir();
+        return sel >= 0 && sel < d->children.len && d->children[sel] == n;
+    }
+    int sel_count() { return multi.len ? multi.len : (selected() ? 1 : 0); }
+    void picked(Vec<FsNode*>& out) {
+        if (multi.len) { for (int i = 0; i < multi.len; i++) out.push(multi[i]); }
+        else if (selected()) out.push(selected());
+    }
+    void select_range(int a, int b) {
+        FsNode* d = dir();
+        multi.clear();
+        for (int i = min(a, b); i <= max(a, b) && i < d->children.len; i++) multi.push(d->children[i]);
+        sel = b;
+    }
+    void update_marquee() {
+        FsNode* d = dir();
+        Rect mq = {min(mq_x0, mq_x1), min(mq_y0, mq_y1), iabs(mq_x1 - mq_x0), iabs(mq_y1 - mq_y0)};
+        multi.clear();
+        for (int i = 0; i < d->children.len; i++) {
+            Rect r = item_rect(i);
+            if (r.x < mq.x + mq.w && r.x + r.w > mq.x && r.y < mq.y + mq.h && r.y + r.h > mq.y) { multi.push(d->children[i]); sel = i; }
+        }
+        if (!multi.len) sel = -1;
+        else anchor = sel;
+    }
+    void do_copy(bool cut) {
+        Vec<FsNode*> items;
+        picked(items);
+        if (!items.len) { items.free(); return; }
+        fclip_clear();
+        g_fclip_cut = cut;
+        char* text = (char*)kmalloc(items.len * 260 + 4);
+        int o = 0;
+        text[0] = 0;
+        for (int i = 0; i < items.len; i++) {
+            char p[256];
+            fs_path(items[i], p, sizeof(p));
+            g_fclip.push(strdup(p));
+            o += snprintf(text + o, 260, "%s%s", i ? "\n" : "", p);
+        }
+        clip_set(text);
+        kfree(text);
+        char msg[48];
+        snprintf(msg, sizeof(msg), "%d item%s", items.len, items.len == 1 ? "" : "s");
+        ui_notify(cut ? "Cut" : "Copied", msg, "folder");
+        items.free();
+    }
+    void do_paste() {
+        FsNode* d = dir();
+        int done = 0, skipped = 0;
+        for (int i = 0; i < g_fclip.len; i++) {
+            FsNode* src = fs_lookup(g_fclip[i]);
+            if (!src || src == fs_root()) continue;
+            if (src->dir && (src == d || fs_is_ancestor(src, d))) { skipped++; continue; }
+            char nm[FS_NAME_MAX];
+            if (g_fclip_cut) {
+                if (src->parent == d) continue;
+                fs_unique_name(d, src->name, nm, sizeof(nm));
+                if (fs_move(src, d, nm)) done++; else skipped++;
+            } else {
+                fs_unique_name(d, src->name, nm, sizeof(nm));
+                if (fs_copy(src, d, nm)) done++; else skipped++;
+            }
+        }
+        if (g_fclip_cut) fclip_clear();
+        multi.clear();
+        sel = -1;
+        char msg[64];
+        snprintf(msg, sizeof(msg), "%d item%s%s", done, done == 1 ? "" : "s", skipped ? ", some skipped" : "");
+        if (done || skipped) ui_notify("Pasted", msg, "folder");
+    }
+    void select_all() {
+        FsNode* d = dir();
+        multi.clear();
+        for (int i = 0; i < d->children.len; i++) multi.push(d->children[i]);
+        sel = d->children.len ? 0 : -1;
+        anchor = 0;
     }
 
     // ------------------------------------------------------------ geometry
@@ -109,6 +202,7 @@ struct FilesApp : App {
         FsNode* d = dir();
         fs_sort(d);
         if (sel >= d->children.len) sel = -1;
+        for (int i = multi.len - 1; i >= 0; i--) if (d->children.find(multi[i]) < 0) multi.remove(i);
         // toolbar
         c.fill(0, 0, w, TOOLBAR_H, th::panel);
         c.hline(0, TOOLBAR_H - 1, w, th::border);
@@ -153,8 +247,8 @@ struct FilesApp : App {
             FsNode* n = d->children[i];
             Rect r = item_rect(i);
             if (r.y + r.h < cr.y || r.y > cr.y + cr.h) continue;
-            bool is_sel = i == sel;
-            bool drop = dragging && n->dir && i != press_item && r.contains(ui_mouse_x - win->client().x, ui_mouse_y - win->client().y);
+            bool is_sel = picked_has(n);
+            bool drop = dragging && n->dir && !picked_has(n) && r.contains(ui_mouse_x - win->client().x, ui_mouse_y - win->client().y);
             if (list_view) {
                 if (is_sel || drop) c.fill(r.x, r.y, r.w, r.h, drop ? blend(accent(), th::white, 80) : accent());
                 else if (i % 2) c.fill(r.x, r.y, r.w, r.h, 0xFFE6E1F0);
@@ -176,6 +270,7 @@ struct FilesApp : App {
             }
         }
         if (!d->children.len) c.text_centered(cr.x, cr.y + cr.h / 2 - 6, cr.w, "this folder is empty", th::muted);
+        if (marquee) draw_marquee(c, {min(mq_x0, mq_x1), min(mq_y0, mq_y1), iabs(mq_x1 - mq_x0), iabs(mq_y1 - mq_y0)});
         c.reset_clip();
         c.set_clip({0, 0, w, h});
         int total = content_height(d->children.len);
@@ -184,7 +279,8 @@ struct FilesApp : App {
         c.fill(0, h - STATUS_H, w, STATUS_H, th::panel);
         c.hline(0, h - STATUS_H, w, th::border);
         char st[96];
-        if (sel >= 0) {
+        if (sel_count() > 1) snprintf(st, sizeof(st), "%d selected", sel_count());
+        else if (sel >= 0) {
             FsNode* n = d->children[sel];
             char sz[24];
             if (n->dir) snprintf(sz, sizeof(sz), "%d items", n->children.len);
@@ -212,10 +308,17 @@ struct FilesApp : App {
         else open_path(p);
     }
     void trash_selected() {
-        FsNode* n = selected();
-        if (!n) return;
-        if (dir() == fs_trash_dir()) { fs_remove(n); ui_notify("Deleted", "removed permanently", "trash"); }
-        else { fs_trash(n); ui_notify("Moved to Trash", n->name, "trash"); }
+        Vec<FsNode*> items;
+        picked(items);
+        if (!items.len) { items.free(); return; }
+        bool in_trash = dir() == fs_trash_dir();
+        char msg[48];
+        if (items.len == 1) strlcpy(msg, items[0]->name, sizeof(msg));
+        else snprintf(msg, sizeof(msg), "%d items", items.len);
+        for (int i = 0; i < items.len; i++) { if (in_trash) fs_remove(items[i]); else fs_trash(items[i]); }
+        ui_notify(in_trash ? "Deleted" : "Moved to Trash", msg, "trash");
+        items.free();
+        multi.clear();
         sel = -1;
         ui_invalidate();
     }
@@ -239,9 +342,18 @@ struct FilesApp : App {
         case F_OPEN: open_item(n); break;
         case F_RENAME: if (n) prompt("rename to:", n->name, rename_cb); break;
         case F_TRASH: trash_selected(); break;
-        case F_DUP:
-            if (n) { char nm[FS_NAME_MAX]; fs_unique_name(dir(), n->name, nm, sizeof(nm)); fs_copy(n, dir(), nm); }
+        case F_DUP: {
+            Vec<FsNode*> items;
+            picked(items);
+            for (int i = 0; i < items.len; i++) { char nm[FS_NAME_MAX]; fs_unique_name(dir(), items[i]->name, nm, sizeof(nm)); fs_copy(items[i], dir(), nm); }
+            items.free();
+            multi.clear();
             break;
+        }
+        case F_COPY: do_copy(false); break;
+        case F_CUT: do_copy(true); break;
+        case F_PASTE: do_paste(); break;
+        case F_SELALL: select_all(); break;
         case F_NEW_FOLDER: { char nm[FS_NAME_MAX]; fs_unique_name(dir(), "new folder", nm, sizeof(nm)); prompt("new folder name:", nm, new_folder_cb); break; }
         case F_NEW_FILE: { char nm[FS_NAME_MAX]; fs_unique_name(dir(), "untitled.txt", nm, sizeof(nm)); prompt("new file name:", nm, new_file_cb); break; }
         case F_CLOSE: close(); break;
@@ -264,12 +376,15 @@ struct FilesApp : App {
         m[0].add("New folder", F_NEW_FOLDER, "ctrl+n").add("New text file", F_NEW_FILE).sep()
             .add("Open", F_OPEN, "enter", has).add("Rename" G_ELLIP, F_RENAME, "f2", has).add("Duplicate", F_DUP, "ctrl+d", has)
             .add("Move to Trash", F_TRASH, "del", has).sep().add("Close", F_CLOSE, "ctrl+w");
-        m[1].clear(); strlcpy(m[1].title, "View", 24);
-        m[1].add("As icons", F_VIEW_ICONS, "", true, !list_view).add("As list", F_VIEW_LIST, "", true, list_view);
-        m[2].clear(); strlcpy(m[2].title, "Go", 24);
-        m[2].add("Up", F_GO_UP, "backspace").sep().add("Home", F_GO_HOME).add("Notes", F_GO_NOTES)
+        m[1].clear(); strlcpy(m[1].title, "Edit", 24);
+        m[1].add("Copy", F_COPY, "ctrl+c", has).add("Cut", F_CUT, "ctrl+x", has).add("Paste", F_PASTE, "ctrl+v", g_fclip.len > 0)
+            .sep().add("Select all", F_SELALL, "ctrl+a");
+        m[2].clear(); strlcpy(m[2].title, "View", 24);
+        m[2].add("As icons", F_VIEW_ICONS, "", true, !list_view).add("As list", F_VIEW_LIST, "", true, list_view);
+        m[3].clear(); strlcpy(m[3].title, "Go", 24);
+        m[3].add("Up", F_GO_UP, "backspace").sep().add("Home", F_GO_HOME).add("Notes", F_GO_NOTES)
             .add("Pictures", F_GO_PICS).add("Disk", F_GO_ROOT).add("Trash", F_GO_TRASH);
-        return 3;
+        return 4;
     }
 
     static void ctx_fn(void* ctx, int cmd) { ((App*)ctx)->on_command(cmd); }
@@ -286,24 +401,35 @@ struct FilesApp : App {
         int off = sc.target;
         if (sb.handle(e, cw - 10, content().y, content().h, total, content().h, off)) { sc.jump(off); return; }
         if (e.kind == M_MOVE) {
+            if (marquee) { mq_x1 = e.x; mq_y1 = e.y; update_marquee(); ui_invalidate(); return; }
             if (pressing && !dragging && press_item >= 0 && (iabs(e.x - press_x) > 6 || iabs(e.y - press_y) > 6)) dragging = true;
             ui_invalidate();
             return;
         }
         if (e.kind == M_UP) {
+            if (marquee) { marquee = false; pressing = false; ui_invalidate(); return; }
             if (dragging) {
                 int target = hit(e.x, e.y);
-                FsNode* src = press_item < d->children.len ? d->children[press_item] : nullptr;
+                FsNode* src = press_item >= 0 && press_item < d->children.len ? d->children[press_item] : nullptr;
                 FsNode* dst = nullptr;
-                if (target >= 0 && target != press_item && d->children[target]->dir) dst = d->children[target];
+                if (target >= 0 && d->children[target]->dir && !picked_has(d->children[target])) dst = d->children[target];
                 int p = place_hit(e.x, e.y);
                 if (p >= 0) dst = fs_lookup(places[p].path);
                 if (src && dst) {
-                    if (dst == fs_trash_dir()) fs_trash(src);
-                    else if (!fs_move(src, dst, nullptr)) ui_notify("Can't move", "a file with that name exists there", "file");
+                    Vec<FsNode*> items;
+                    picked(items);
+                    if (!picked_has(src)) { items.clear(); items.push(src); }
+                    for (int i = 0; i < items.len; i++) {
+                        if (dst == fs_trash_dir()) fs_trash(items[i]);
+                        else if (items[i] != dst && !fs_move(items[i], dst, nullptr)) ui_notify("Can't move", "a file with that name exists there", "file");
+                    }
+                    items.free();
+                    multi.clear();
                     sel = -1;
                 }
             } else if (e.button == 1) {
+                if (press_multi && press_item >= 0 && press_item < d->children.len && !kbd_ctrl_down() && !kbd_shift_down()) { multi.clear(); sel = anchor = press_item; }
+                press_multi = false;
                 // toolbar buttons
                 if (Rect{8, 6, 26, 22}.contains(e.x, e.y)) go_back();
                 else if (Rect{38, 6, 26, 22}.contains(e.x, e.y)) go_up();
@@ -315,11 +441,13 @@ struct FilesApp : App {
                 Menu m;
                 Rect cl = win->client();
                 if (i >= 0) {
-                    sel = i;
-                    m.add("Open", F_OPEN).add("Rename" G_ELLIP, F_RENAME).add("Duplicate", F_DUP).sep()
+                    if (!picked_has(d->children[i])) { multi.clear(); sel = anchor = i; }
+                    m.add("Open", F_OPEN).add("Rename" G_ELLIP, F_RENAME, "", sel_count() == 1).add("Duplicate", F_DUP).sep()
+                     .add("Copy", F_COPY).add("Cut", F_CUT).sep()
                      .add(dir() == fs_trash_dir() ? "Delete forever" : "Move to Trash", F_TRASH);
                 } else if (content().contains(e.x, e.y)) {
                     m.add("New folder", F_NEW_FOLDER).add("New text file", F_NEW_FILE).sep()
+                     .add("Paste", F_PASTE, "", g_fclip.len > 0).add("Select all", F_SELALL).sep()
                      .add("As icons", F_VIEW_ICONS, "", true, !list_view).add("As list", F_VIEW_LIST, "", true, list_view);
                 }
                 if (m.count) menu_popup(&m, cl.x + e.x, cl.y + e.y, ctx_fn, this);
@@ -332,8 +460,22 @@ struct FilesApp : App {
         if (e.kind == M_DOWN || e.kind == M_DBL) {
             if (e.button != 1) return;
             int i = hit(e.x, e.y);
-            if (content().contains(e.x, e.y)) sel = i;
-            if (e.kind == M_DBL && i >= 0) { open_item(d->children[i]); return; }
+            bool ctrl = kbd_ctrl_down(), shift = kbd_shift_down();
+            press_multi = false;
+            if (e.kind == M_DBL && i >= 0) { multi.clear(); sel = anchor = i; open_item(d->children[i]); return; }
+            if (content().contains(e.x, e.y)) {
+                if (i < 0) {
+                    if (!ctrl && !shift) { sel = -1; multi.clear(); }
+                    marquee = true; mq_x0 = mq_x1 = e.x; mq_y0 = mq_y1 = e.y;
+                } else if (ctrl) {
+                    if (!multi.len && selected()) multi.push(selected());
+                    int at = multi.find(d->children[i]);
+                    if (at >= 0) multi.remove(at); else multi.push(d->children[i]);
+                    sel = anchor = i;
+                } else if (shift && sel >= 0) select_range(anchor, i);
+                else if (!picked_has(d->children[i])) { multi.clear(); sel = anchor = i; }
+                else { sel = i; press_multi = multi.len > 1; }
+            }
             pressing = true;
             press_x = e.x; press_y = e.y;
             press_item = i;
@@ -345,6 +487,11 @@ struct FilesApp : App {
         FsNode* d = dir();
         int n = d->children.len;
         int step = list_view ? 1 : cols();
+        if (e.ctrl && !e.alt && (e.key == 'c' || e.key == 'x' || e.key == 'v' || e.key == 'a')) {
+            on_command(e.key == 'c' ? F_COPY : e.key == 'x' ? F_CUT : e.key == 'v' ? F_PASTE : F_SELALL);
+            return;
+        }
+        int old_sel = sel;
         switch (e.key) {
         case K_RIGHT: if (!list_view) sel = min(sel + 1, n - 1); break;
         case K_LEFT: if (!list_view) sel = max(sel - 1, 0); break;
@@ -362,6 +509,10 @@ struct FilesApp : App {
                 for (int i = 0; i < n; i++)
                     if (to_lower(d->children[(sel + 1 + i) % n]->name[0]) == to_lower(e.ch)) { sel = (sel + 1 + i) % n; break; }
             }
+        }
+        if (sel != old_sel && (e.key == K_RIGHT || e.key == K_LEFT || e.key == K_UP || e.key == K_DOWN)) {
+            if (e.shift && old_sel >= 0) select_range(anchor, sel);
+            else { multi.clear(); anchor = sel; }
         }
         // keep the selection visible
         if (sel >= 0) {
