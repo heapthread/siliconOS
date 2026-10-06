@@ -95,6 +95,17 @@ def step_generated():
     art = os.path.join(ROOT, "tools", "make_art.py")
     if os.path.exists(art):
         run([sys.executable, art])
+    # sample app modules built with the SDK are embedded in the kernel
+    sdk = os.path.join(ROOT, "sdk", "build_app.py")
+    ex_dir = os.path.join(ROOT, "sdk", "examples")
+    if os.path.exists(sdk) and os.path.isdir(ex_dir):
+        sdk_deps = walk(os.path.join(ROOT, "sdk"), {".py", ".h", ".cpp", ".in"})
+        for name in sorted(os.listdir(ex_dir)):
+            srcs = sorted(walk(os.path.join(ex_dir, name), {".cpp", ".c"}))
+            out = os.path.join(GEN, "sapp", name + ".sapp")
+            if srcs and newer(out, sdk_deps):
+                print(f"[sapp] {name}")
+                run([sys.executable, sdk, "-o", out] + srcs)
     assets = os.path.join(ROOT, "tools", "assets.py")
     if os.path.exists(assets):
         run([sys.executable, assets, GEN])

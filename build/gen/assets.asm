@@ -3,7 +3,7 @@ section .rdata
 global asset_table
 global asset_count
 align 8
-asset_count: dq 72
+asset_count: dq 74
 asset_table:
     dq name0, data0, 2151
     dq name1, data1, 1497
@@ -39,44 +39,46 @@ asset_table:
     dq name31, data31, 850
     dq name32, data32, 1444
     dq name33, data33, 820
-    dq name34, data34, 992
-    dq name35, data35, 898
-    dq name36, data36, 870
-    dq name37, data37, 596
-    dq name38, data38, 794
-    dq name39, data39, 742
-    dq name40, data40, 922
-    dq name41, data41, 528
-    dq name42, data42, 972
-    dq name43, data43, 898
-    dq name44, data44, 606
-    dq name45, data45, 878
-    dq name46, data46, 862
-    dq name47, data47, 1048
-    dq name48, data48, 842
-    dq name49, data49, 1258
-    dq name50, data50, 964
-    dq name51, data51, 1156
-    dq name52, data52, 910
-    dq name53, data53, 738
-    dq name54, data54, 790
-    dq name55, data55, 700
-    dq name56, data56, 1038
-    dq name57, data57, 674
-    dq name58, data58, 1182
-    dq name59, data59, 660
-    dq name60, data60, 718
-    dq name61, data61, 806
-    dq name62, data62, 914
-    dq name63, data63, 55072
-    dq name64, data64, 21724
-    dq name65, data65, 26496
-    dq name66, data66, 520388
-    dq name67, data67, 638793
-    dq name68, data68, 394562
-    dq name69, data69, 394407
-    dq name70, data70, 599722
-    dq name71, data71, 39548
+    dq name34, data34, 914
+    dq name35, data35, 992
+    dq name36, data36, 898
+    dq name37, data37, 870
+    dq name38, data38, 596
+    dq name39, data39, 794
+    dq name40, data40, 742
+    dq name41, data41, 922
+    dq name42, data42, 528
+    dq name43, data43, 972
+    dq name44, data44, 898
+    dq name45, data45, 606
+    dq name46, data46, 878
+    dq name47, data47, 862
+    dq name48, data48, 1048
+    dq name49, data49, 842
+    dq name50, data50, 1258
+    dq name51, data51, 964
+    dq name52, data52, 1156
+    dq name53, data53, 910
+    dq name54, data54, 738
+    dq name55, data55, 790
+    dq name56, data56, 700
+    dq name57, data57, 1038
+    dq name58, data58, 674
+    dq name59, data59, 1182
+    dq name60, data60, 660
+    dq name61, data61, 718
+    dq name62, data62, 806
+    dq name63, data63, 914
+    dq name64, data64, 55072
+    dq name65, data65, 21724
+    dq name66, data66, 26496
+    dq name67, data67, 520388
+    dq name68, data68, 638793
+    dq name69, data69, 394562
+    dq name70, data70, 394407
+    dq name71, data71, 599722
+    dq name72, data72, 39548
+    dq name73, data73, 3600
 name0: db "icon/terminal", 0
 align 8
 data0: incbin "sil/a00.sil"
@@ -179,117 +181,123 @@ data32: incbin "sil/a32.sil"
 name33: db "icon/pdf", 0
 align 8
 data33: incbin "sil/a33.sil"
-name34: db "icon/calendar", 0
+name34: db "icon/sapp", 0
 align 8
 data34: incbin "sil/a34.sil"
-name35: db "icon/tasks", 0
+name35: db "icon/calendar", 0
 align 8
 data35: incbin "sil/a35.sil"
-name36: db "icon/hex", 0
+name36: db "icon/tasks", 0
 align 8
 data36: incbin "sil/a36.sil"
-name37: db "icon/storage", 0
+name37: db "icon/hex", 0
 align 8
 data37: incbin "sil/a37.sil"
-name38: db "icon/convert", 0
+name38: db "icon/storage", 0
 align 8
 data38: incbin "sil/a38.sil"
-name39: db "icon/palette", 0
+name39: db "icon/convert", 0
 align 8
 data39: incbin "sil/a39.sil"
-name40: db "icon/capture", 0
+name40: db "icon/palette", 0
 align 8
 data40: incbin "sil/a40.sil"
-name41: db "icon/weather", 0
+name41: db "icon/capture", 0
 align 8
 data41: incbin "sil/a41.sil"
-name42: db "icon/typing", 0
+name42: db "icon/weather", 0
 align 8
 data42: incbin "sil/a42.sil"
-name43: db "icon/network", 0
+name43: db "icon/typing", 0
 align 8
 data43: incbin "sil/a43.sil"
-name44: db "icon/archive", 0
+name44: db "icon/network", 0
 align 8
 data44: incbin "sil/a44.sil"
-name45: db "icon/pong", 0
+name45: db "icon/archive", 0
 align 8
 data45: incbin "sil/a45.sil"
-name46: db "icon/invaders", 0
+name46: db "icon/pong", 0
 align 8
 data46: incbin "sil/a46.sil"
-name47: db "icon/asteroids", 0
+name47: db "icon/invaders", 0
 align 8
 data47: incbin "sil/a47.sil"
-name48: db "icon/runner", 0
+name48: db "icon/asteroids", 0
 align 8
 data48: incbin "sil/a48.sil"
-name49: db "icon/connect4", 0
+name49: db "icon/runner", 0
 align 8
 data49: incbin "sil/a49.sil"
-name50: db "icon/memory", 0
+name50: db "icon/connect4", 0
 align 8
 data50: incbin "sil/a50.sil"
-name51: db "icon/wordy", 0
+name51: db "icon/memory", 0
 align 8
 data51: incbin "sil/a51.sil"
-name52: db "icon/sudoku", 0
+name52: db "icon/wordy", 0
 align 8
 data52: incbin "sil/a52.sil"
-name53: db "icon/solitaire", 0
+name53: db "icon/sudoku", 0
 align 8
 data53: incbin "sil/a53.sil"
-name54: db "icon/chess", 0
+name54: db "icon/solitaire", 0
 align 8
 data54: incbin "sil/a54.sil"
-name55: db "icon/emoji", 0
+name55: db "icon/chess", 0
 align 8
 data55: incbin "sil/a55.sil"
-name56: db "icon/apps", 0
+name56: db "icon/emoji", 0
 align 8
 data56: incbin "sil/a56.sil"
-name57: db "icon/notifications", 0
+name57: db "icon/apps", 0
 align 8
 data57: incbin "sil/a57.sil"
-name58: db "icon/firewall", 0
+name58: db "icon/notifications", 0
 align 8
 data58: incbin "sil/a58.sil"
-name59: db "icon/docs", 0
+name59: db "icon/firewall", 0
 align 8
 data59: incbin "sil/a59.sil"
-name60: db "icon/mail", 0
+name60: db "icon/docs", 0
 align 8
 data60: incbin "sil/a60.sil"
-name61: db "icon/fonts", 0
+name61: db "icon/mail", 0
 align 8
 data61: incbin "sil/a61.sil"
-name62: db "icon/module", 0
+name62: db "icon/fonts", 0
 align 8
 data62: incbin "sil/a62.sil"
-name63: db "wall/wafer", 0
+name63: db "icon/module", 0
 align 8
 data63: incbin "sil/a63.sil"
-name64: db "wall/circuit dusk", 0
+name64: db "wall/wafer", 0
 align 8
 data64: incbin "sil/a64.sil"
-name65: db "wall/silicon valley", 0
+name65: db "wall/circuit dusk", 0
 align 8
 data65: incbin "sil/a65.sil"
-name66: db "wall/sunset mountains", 0
+name66: db "wall/silicon valley", 0
 align 8
 data66: incbin "sil/a66.sil"
-name67: db "wall/night hills", 0
+name67: db "wall/sunset mountains", 0
 align 8
 data67: incbin "sil/a67.sil"
-name68: db "wall/starry night", 0
+name68: db "wall/night hills", 0
 align 8
 data68: incbin "sil/a68.sil"
-name69: db "wall/distant city", 0
+name69: db "wall/starry night", 0
 align 8
 data69: incbin "sil/a69.sil"
-name70: db "wall/foggy valley", 0
+name70: db "wall/distant city", 0
 align 8
 data70: incbin "sil/a70.sil"
-name71: db "emoji/sheet", 0
+name71: db "wall/foggy valley", 0
 align 8
 data71: incbin "sil/a71.sil"
+name72: db "emoji/sheet", 0
+align 8
+data72: incbin "sil/a72.sil"
+name73: db "sapp/hello", 0
+align 8
+data73: incbin "sil/a73.sil"

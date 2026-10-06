@@ -1,5 +1,6 @@
 // silicon - utilities: Calendar, Tasks, Hex viewer, Storage, Convert, Palette
 #include "apps.h"
+#include "../../net/net.h"
 
 static const int BAR = 34;
 
@@ -70,6 +71,147 @@ struct CalendarApp : App {
         fs_write_text("/home/.config/calendar", buf);
         kfree(buf);
     }
+    // ---- iCalendar (.ics): import files, subscribe to a URL, export everything
+    HttpRequest* sync_req = nullptr;
+    char sub_url[240] = "";
+    char status[80] = "";
+    ~CalendarApp() { if (sync_req) http_free(sync_req); }
+
+    bool has_event(int y, int m, int d, const char* text) {
+        for (int i = 0; i < nev; i++) if (evs[i].y == y && evs[i].m == m && evs[i].d == d && !strcmp(evs[i].text, text)) return true;
+        return false;
+    }
+    int import_ics(const char* text) {
+        int added = 0;
+        bool in_ev = false;
+        int y = 0, m = 0, d = 0;
+        char summary[72] = "";
+        const char* p = text;
+        char line[400];
+        while (*p) {
+            // one logical line: folded continuation lines start with a space or tab
+            int l = 0;
+            for (;;) {
+                while (*p && *p != '\n' && l < 399) { if (*p != '\r') line[l++] = *p; p++; }
+                if (*p == '\n') p++;
+                if ((*p == ' ' || *p == '\t') && l < 399) { p++; continue; }
+                break;
+            }
+            line[l] = 0;
+            if (!strcmp(line, "BEGIN:VEVENT")) { in_ev = true; y = m = d = 0; summary[0] = 0; }
+            else if (!strcmp(line, "END:VEVENT")) {
+                if (in_ev && y > 0 && m >= 1 && m <= 12 && d >= 1 && d <= 31 && summary[0] && nev < 300 && !has_event(y, m, d, summary)) {
+                    Ev& ev = evs[nev++];
+                    ev.y = y; ev.m = m; ev.d = d;
+                    strlcpy(ev.text, summary, sizeof(ev.text));
+                    added++;
+                }
+                in_ev = false;
+            } else if (in_ev) {
+                char* colon = strchr(line, ':');
+                if (!colon) continue;
+                if (str_ieq_prefix(line, "DTSTART")) {
+                    const char* v = colon + 1;
+                    int n = 0;
+                    while (v[n] >= '0' && v[n] <= '9' && n < 8) n++;
+                    if (n == 8) { y = (v[0] - '0') * 1000 + (v[1] - '0') * 100 + (v[2] - '0') * 10 + (v[3] - '0'); m = (v[4] - '0') * 10 + (v[5] - '0'); d = (v[6] - '0') * 10 + (v[7] - '0'); }
+                } else if (str_ieq_prefix(line, "SUMMARY")) {
+                    int o = 0;
+                    for (const char* v = colon + 1; *v && o < 71; v++) {
+                        if (*v == '\\' && v[1]) { v++; summary[o++] = *v == 'n' || *v == 'N' ? ' ' : *v; }
+                        else if (*v != '|') summary[o++] = *v;
+                    }
+                    summary[o] = 0;
+                }
+            }
+        }
+        return added;
+    }
+    void import_file(const char* path) {
+        FsNode* f = fs_lookup(path);
+        if (!f || f->dir) return;
+        int n = import_ics(fs_read_text(f));
+        save();
+        snprintf(status, sizeof(status), "imported %d event%s from %s", n, n == 1 ? "" : "s", f->name);
+        ui_notify("Calendar", status, "calendar");
+    }
+    void export_ics() {
+        char* buf = (char*)kmalloc(nev * 140 + 120);
+        int o = snprintf(buf, 120, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//silicon//calendar//EN\r\n");
+        for (int i = 0; i < nev; i++)
+            o += snprintf(buf + o, 140, "BEGIN:VEVENT\r\nUID:silicon-%d@local\r\nDTSTART;VALUE=DATE:%04d%02d%02d\r\nSUMMARY:%s\r\nEND:VEVENT\r\n", i, evs[i].y, evs[i].m, evs[i].d, evs[i].text);
+        o += snprintf(buf + o, 24, "END:VCALENDAR\r\n");
+        char nm[FS_NAME_MAX];
+        fs_unique_name(fs_home(), "calendar.ics", nm, sizeof(nm));
+        char path[96];
+        snprintf(path, sizeof(path), "/home/%s", nm);
+        fs_write_text(path, buf);
+        kfree(buf);
+        snprintf(status, sizeof(status), "exported %d events to %s", nev, path);
+        ui_notify("Calendar", status, "calendar");
+    }
+    void start_sync() {
+        if (!sub_url[0]) {
+            FsNode* f = fs_lookup("/home/.config/calendar-url");
+            if (f) strlcpy(sub_url, fs_read_text(f), sizeof(sub_url));
+            for (char* q = sub_url; *q; q++) if (*q == '\n') *q = 0;
+        }
+        if (!sub_url[0]) { subscribe_prompt(); return; }
+        if (sync_req) http_free(sync_req);
+        sync_req = http_get(sub_url);
+        http_set_accept(sync_req, "text/calendar,text/plain,*/*");
+        snprintf(status, sizeof(status), "syncing" G_ELLIP);
+    }
+    void subscribe_prompt() {
+        prompt("Calendar address (an .ics or webcal URL)", sub_url, [](App* a, const char* t) {
+            CalendarApp* s = (CalendarApp*)a;
+            if (!t[0]) return;
+            strlcpy(s->sub_url, t, sizeof(s->sub_url));
+            if (str_ieq_prefix(s->sub_url, "webcal://")) { char tmp[240]; snprintf(tmp, sizeof(tmp), "https://%s", s->sub_url + 9); strlcpy(s->sub_url, tmp, sizeof(s->sub_url)); }
+            fs_mkdirs("/home/.config");
+            fs_write_text("/home/.config/calendar-url", s->sub_url);
+            s->start_sync();
+        });
+    }
+    void tick() override {
+        if (!sync_req) return;
+        int ph = http_step(sync_req);
+        if (ph == HTTP_ERROR) { snprintf(status, sizeof(status), "sync failed: %s", http_error(sync_req)); http_free(sync_req); sync_req = nullptr; ui_invalidate(); }
+        else if (ph == HTTP_DONE) {
+            u32 len;
+            const u8* body = http_body(sync_req, &len);
+            char* t = (char*)kmalloc(len + 1);
+            memcpy(t, body, len);
+            t[len] = 0;
+            int n = http_status(sync_req) < 400 ? import_ics(t) : -1;
+            kfree(t);
+            if (n >= 0) { save(); snprintf(status, sizeof(status), "synced: %d new event%s", n, n == 1 ? "" : "s"); }
+            else snprintf(status, sizeof(status), "the server answered %d", http_status(sync_req));
+            http_free(sync_req);
+            sync_req = nullptr;
+            ui_invalidate();
+        }
+    }
+    int menus(Menu* m) override {
+        m[0].clear(); strlcpy(m[0].title, "Calendar", 24);
+        m[0].add("Add event" G_ELLIP, 1, "a").sep().add("Import .ics file" G_ELLIP, 2).add("Subscribe to an address" G_ELLIP, 3)
+            .add("Sync now", 4, "", sub_url[0] != 0 || fs_lookup("/home/.config/calendar-url") != nullptr).add("Export as .ics", 5, "", nev > 0);
+        return 1;
+    }
+    void on_command(int cmd) override {
+        if (cmd == 1) add_prompt();
+        else if (cmd == 2) pick_file("Import calendar", "/home", "ics", false, "", [](App* a, const char* p) { ((CalendarApp*)a)->import_file(p); ui_invalidate(); });
+        else if (cmd == 3) subscribe_prompt();
+        else if (cmd == 4) start_sync();
+        else if (cmd == 5) export_ics();
+        ui_invalidate();
+    }
+    bool on_drop(const char* path, int, int) override {
+        FsNode* f = fs_lookup(path);
+        if (!f || f->dir || !str_icontains(f->name, ".ics")) return false;
+        import_file(path);
+        return true;
+    }
     int count_on(int y, int m, int d) { int n = 0; for (int i = 0; i < nev; i++) n += evs[i].y == y && evs[i].m == m && evs[i].d == d; return n; }
     void shift(int dm) {
         month += dm;
@@ -120,6 +262,7 @@ struct CalendarApp : App {
             y += 26; shown++;
         }
         if (!shown) c.text(x0, y, "nothing planned", th::muted);
+        if (status[0]) c.text_n(GX, h - 16, status, (w - 24) / 8, th::muted);
     }
     void on_mouse(const MouseEv& e) override {
         if (e.kind != M_UP || e.button != 1) return;

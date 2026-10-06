@@ -5,6 +5,7 @@
 #include "../term/shell.h"
 #include "../display.h"
 #include "lockscreen.h"
+void modules_install_samples();   // apps/module.cpp
 
 // ================================================================ state
 int SW, SH;
@@ -1088,6 +1089,7 @@ void ui_run() {
     SW = fb.width;
     SH = fb.height;
     desk_running = true;
+    modules_install_samples();
     popup.open = false;
     launcher_open = false;
     overview_on = false;

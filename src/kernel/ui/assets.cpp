@@ -36,6 +36,7 @@ void ui_preload() {
     if (icons.len) return;
     for (u64 i = 0; i < asset_count; i++) {
         AssetEntry& e = asset_table[i];
+        if (str_starts(e.name, "sapp/")) continue;       // app modules, see modules_install_samples()
         Image img;
         if (!image_decode(e.data, (u32)e.len, img)) { klog("asset %s: bad data\n", e.name); continue; }
         if (str_starts(e.name, "icon/")) {
