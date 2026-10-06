@@ -586,7 +586,7 @@ static void show_glyph_fallback(R& r, PdfFont* f, u32 code, double w0, const Mat
         s.img = r.img; s.clip = r.gs.clip; s.src = im; s.inv = inv; s.alpha = 255; s.mode = r.gs.blend; s.smooth = true;
         // tint with the fill colour: use a SolidSink-like wrapper
         struct Tint : Sink {
-            ImageSink* is; R* rr;
+            ImageSink* is; R* rr; bool down;
             void row(int y, int x0, int x1, const u8* cov) override {
                 u32* dst = rr->img->px + (size_t)y * rr->img->w;
                 for (int x = x0; x < x1; x++) {
@@ -594,18 +594,29 @@ static void show_glyph_fallback(R& r, PdfFont* f, u32 code, double w0, const Mat
                     if (!a) continue;
                     a = a * is->clip->at(x, y) / 255;
                     if (!a) continue;
-                    double u, v;
-                    mat_apply(is->inv, x + 0.5, y + 0.5, &u, &v);
-                    double fx = u - 0.5, fy = v - 0.5;
-                    int ix = (int)m_floor(fx), iy = (int)m_floor(fy);
-                    double wx = fx - ix, wy = fy - iy;
                     auto at = [&](int xx, int yy) -> double {
                         if (xx < 0 || yy < 0 || xx >= PW || yy >= PH) return 0;
                         return (is->src->px[yy * PW + xx] >> 24) / 255.0;
                     };
-                    double c = at(ix, iy) * (1 - wx) * (1 - wy) + at(ix + 1, iy) * wx * (1 - wy) + at(ix, iy + 1) * (1 - wx) * wy + at(ix + 1, iy + 1) * wx * wy;
-                    // sharpen the bilinear ramp
-                    c = (c - 0.3) * 2.0;
+                    double c;
+                    if (down) {                                        // minifying: average a few samples inside the device pixel
+                        c = 0;
+                        for (int sy = 0; sy < 3; sy++)
+                            for (int sx = 0; sx < 3; sx++) {
+                                double u, v;
+                                mat_apply(is->inv, x + (sx + 0.5) / 3, y + (sy + 0.5) / 3, &u, &v);
+                                c += at((int)m_floor(u), (int)m_floor(v));
+                            }
+                        c = c / 9.0 * 1.35;
+                    } else {
+                        double u, v;
+                        mat_apply(is->inv, x + 0.5, y + 0.5, &u, &v);
+                        double fx = u - 0.5, fy = v - 0.5;
+                        int ix = (int)m_floor(fx), iy = (int)m_floor(fy);
+                        double wx = fx - ix, wy = fy - iy;
+                        c = at(ix, iy) * (1 - wx) * (1 - wy) + at(ix + 1, iy) * wx * (1 - wy) + at(ix, iy + 1) * (1 - wx) * wy + at(ix + 1, iy + 1) * wx * wy;
+                        c = (c - 0.3) * 2.0;
+                    }
                     if (c <= 0) continue;
                     if (c > 1) c = 1;
                     a = (u32)(a * c);
@@ -615,6 +626,7 @@ static void show_glyph_fallback(R& r, PdfFont* f, u32 code, double w0, const Mat
             }
         } t;
         t.is = &s; t.rr = &r;
+        t.down = m_sqrt(m_fabs(inv.a * inv.d - inv.b * inv.c)) > 0.85;
         raster_fill(dq, false, cb, t);
     }
     dq.free();
