@@ -4,6 +4,13 @@
 struct TrashApp : App {
     int sel = -1;
     int cw = 0, ch = 0;
+    bool on_drop(const char* path, int, int) override {
+        FsNode* n = fs_lookup(path);
+        if (!n || n == fs_trash_dir() || fs_is_ancestor(fs_trash_dir(), n)) return false;
+        fs_trash(n);
+        ui_notify("Moved to Trash", n->name, "trash");
+        return true;
+    }
     const char* app_id() override { return "trash"; }
     const char* title() override { return "Trash"; }
     int pref_w() override { return 520; }

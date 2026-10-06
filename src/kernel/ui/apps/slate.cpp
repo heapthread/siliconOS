@@ -652,6 +652,12 @@ struct SlateApp : App {
         ui_invalidate();
     }
     void open_arg(const char* a) override { open_path_tab(a); }
+    bool on_drop(const char* path, int, int) override {
+        FsNode* n = fs_lookup(path);
+        if (!n || n->dir) return false;
+        open_path_tab(path);
+        return true;
+    }
 
     // ------------------------------------------------------------ geometry
     int lh() { return 15 * scale; }

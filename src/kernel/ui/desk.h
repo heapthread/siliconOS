@@ -114,6 +114,12 @@ void draw_desktop_icons(Canvas& c);
 void desk_click(int i, int button, bool dbl, int mx, int my);
 void desk_background_menu(int mx, int my);
 void desk_key(const KeyEvent& e);
+extern bool desk_dragging;                          // icons are being dragged
+void desk_drag_start(int mx, int my);
+void desk_drag_move(int mx, int my);
+void desk_drag_drop(int mx, int my);
+void draw_desk_drag(Canvas& c);
+void desk_place_new(FsNode* n, int mx, int my);       // put an icon where it was dropped
 
 void draw_cursor(Canvas& c);
 Rect cursor_rect();

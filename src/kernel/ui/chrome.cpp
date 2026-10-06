@@ -513,10 +513,96 @@ void draw_toasts(Canvas& c) {
 int desk_sel = -1;
 static u8 desk_mask[128];
 
+// Icons snap to a grid but sit wherever they were dropped. Positions are kept by file name in
+// /home/.config/desktop; icons without one take the first free cell (top to bottom, left to right).
+struct DeskPos { char name[FS_NAME_MAX]; int col, row; };
+static Vec<DeskPos> desk_pos;
+static bool desk_pos_loaded = false;
+static int slot_col[128], slot_row[128];
+static u32 slot_gen = 0xFFFFFFFFu, slot_ver = 0, pos_ver = 1;
+static int slot_sh = 0, slot_cols = 1;
+bool desk_dragging = false;
+static int drag_press = -1, drag_x0 = 0, drag_y0 = 0, drag_dx = 0, drag_dy = 0;
+static const int DESK_MAXC = 40, DESK_MAXR = 16;
+
+static int desk_rows() { return min(DESK_MAXR, max(1, (SH - TOPBAR_H - 130) / 86)); }
+
+static void desk_load_pos() {
+    desk_pos_loaded = true;
+    desk_pos.clear();
+    FsNode* f = fs_lookup("/home/.config/desktop");
+    if (!f) return;
+    const char* t = fs_read_text(f);
+    while (*t) {
+        const char* e = strchr(t, '\n');
+        int l = e ? (int)(e - t) : (int)strlen(t);
+        char line[96];
+        memcpy(line, t, min(l, 95));
+        line[min(l, 95)] = 0;
+        char* b1 = strchr(line, '|');
+        char* b2 = b1 ? strchr(b1 + 1, '|') : nullptr;
+        if (b2) {
+            *b1 = 0; *b2 = 0;
+            DeskPos p;
+            strlcpy(p.name, line, sizeof(p.name));
+            p.col = atoi(b1 + 1); p.row = atoi(b2 + 1);
+            desk_pos.push(p);
+        }
+        if (!e) break;
+        t = e + 1;
+    }
+}
+static void desk_save_pos() {
+    char* buf = (char*)kmalloc(desk_pos.len * 80 + 8);
+    int o = 0;
+    buf[0] = 0;
+    for (int i = 0; i < desk_pos.len; i++) o += snprintf(buf + o, 80, "%s|%d|%d\n", desk_pos[i].name, desk_pos[i].col, desk_pos[i].row);
+    fs_mkdirs("/home/.config");
+    fs_write_text("/home/.config/desktop", buf);
+    kfree(buf);
+}
+static void desk_set_pos(const char* name, int col, int row) {
+    for (int i = 0; i < desk_pos.len; i++) if (!strcmp(desk_pos[i].name, name)) { desk_pos[i].col = col; desk_pos[i].row = row; pos_ver++; return; }
+    DeskPos p;
+    strlcpy(p.name, name, sizeof(p.name));
+    p.col = col; p.row = row;
+    desk_pos.push(p);
+    pos_ver++;
+}
+static void desk_assign() {
+    FsNode* home = fs_home();
+    int n = home ? min(home->children.len, 128) : 0;
+    if (!desk_pos_loaded) desk_load_pos();
+    if (slot_gen == fs_generation() && slot_ver == pos_ver && slot_sh == SH) return;
+    slot_gen = fs_generation(); slot_ver = pos_ver; slot_sh = SH;
+    int rows = desk_rows();
+    static bool occ[DESK_MAXC][DESK_MAXR];
+    memset(occ, 0, sizeof(occ));
+    bool done[128];
+    for (int i = 0; i < n; i++) {
+        done[i] = false;
+        for (int k = 0; k < desk_pos.len; k++) {
+            if (strcmp(desk_pos[k].name, home->children[i]->name)) continue;
+            int c = desk_pos[k].col, r = desk_pos[k].row;
+            if (c >= 0 && c < DESK_MAXC && r >= 0 && r < rows && !occ[c][r]) { occ[c][r] = true; slot_col[i] = c; slot_row[i] = r; done[i] = true; }
+            break;
+        }
+    }
+    int c = 0, r = 0;
+    for (int i = 0; i < n; i++) {
+        if (done[i]) continue;
+        while (c < DESK_MAXC && occ[c][r]) { if (++r >= rows) { r = 0; c++; } }
+        if (c >= DESK_MAXC) { c = DESK_MAXC - 1; r = 0; }
+        occ[c][r] = true; slot_col[i] = c; slot_row[i] = r;
+    }
+    slot_cols = 1;
+    for (int i = 0; i < n; i++) slot_cols = max(slot_cols, slot_col[i] + 1);
+}
+static Rect cell_rect(int col, int row) { return {14 + col * 90, TOPBAR_H + 14 + row * 86, 86, 84}; }
 static Rect desk_cell(int i) {
-    int rows = max(1, (SH - TOPBAR_H - 130) / 86);
-    int col = i / rows, row = i % rows;
-    return {14 + col * 90, TOPBAR_H + 14 + row * 86, 86, 84};
+    desk_assign();
+    if (i < 0 || i >= 128) return {0, 0, 0, 0};
+    return cell_rect(slot_col[i], slot_row[i]);
 }
 
 bool desk_selected(int i) { return i >= 0 && i < 128 && desk_mask[i]; }
@@ -525,10 +611,9 @@ int desk_sel_count() { int n = 0; for (int i = 0; i < 128; i++) n += desk_mask[i
 void desk_save_sel(u8* out) { memcpy(out, desk_mask, 128); }
 Rect desk_area() {
     FsNode* home = fs_home();
-    int n = home ? home->children.len : 0;
-    int rows = max(1, (SH - TOPBAR_H - 130) / 86);
-    int cols = max(1, (n + rows - 1) / rows);
-    return {0, TOPBAR_H, 14 + cols * 90 + 4, SH - TOPBAR_H};
+    (void)home;
+    desk_assign();
+    return {0, TOPBAR_H, 14 + (slot_cols + (desk_dragging ? 1 : 0)) * 90 + 4, SH - TOPBAR_H};
 }
 void desk_select_rect(Rect r, const u8* base) {
     FsNode* home = fs_home();
@@ -557,6 +642,7 @@ void draw_desktop_icons(Canvas& c) {
         Image& img = icon(ic)->big;
         int ix = r.x + (r.w - 64) / 2;
         bool sel = desk_selected(i);
+        if (desk_dragging && sel) { c.fill_alpha(ix - 3, r.y - 3, 70, 70, th::white, 20); continue; }
         bool hov = !sel && r.contains(ui_mouse_x, ui_mouse_y) && !wm_focused_covers(ui_mouse_x, ui_mouse_y);
         if (sel) c.fill_alpha(ix - 3, r.y - 3, 70, 70, accent(), 110);
         else if (hov) c.fill_alpha(ix - 3, r.y - 3, 70, 70, th::white, 40);
@@ -571,6 +657,126 @@ void draw_desktop_icons(Canvas& c) {
         c.text(tx, r.y + 68, shown, th::white);
     }
 }
+
+// ---- dragging icons around, or out to a window / the trash
+static void drag_bounds_damage() {
+    FsNode* home = fs_home();
+    int n = home ? min(home->children.len, 128) : 0;
+    Rect u = {0, 0, 0, 0};
+    for (int i = 0; i < n; i++) if (desk_selected(i)) { Rect r = desk_cell(i); u = rect_union(u, r); }
+    if (u.empty()) return;
+    damage(grow({u.x + drag_dx, u.y + drag_dy, u.w, u.h}, 4));
+}
+void desk_drag_start(int mx, int my) {
+    desk_assign();
+    drag_press = desk_hit(mx, my);
+    drag_x0 = mx; drag_y0 = my; drag_dx = drag_dy = 0;
+    desk_dragging = false;
+}
+void desk_drag_move(int mx, int my) {
+    if (drag_press < 0) return;
+    if (!desk_dragging && (iabs(mx - drag_x0) > 5 || iabs(my - drag_y0) > 5)) {
+        desk_dragging = true;
+        if (!desk_selected(drag_press)) { desk_clear_sel(); desk_sel = drag_press; if (drag_press < 128) desk_mask[drag_press] = 1; }
+        damage(desk_area());
+    }
+    if (!desk_dragging) return;
+    drag_bounds_damage();
+    drag_dx = mx - drag_x0; drag_dy = my - drag_y0;
+    drag_bounds_damage();
+}
+void draw_desk_drag(Canvas& c) {
+    if (!desk_dragging) return;
+    FsNode* home = fs_home();
+    int n = home ? min(home->children.len, 128) : 0;
+    for (int i = 0; i < n; i++) {
+        if (!desk_selected(i)) continue;
+        Rect r = desk_cell(i);
+        FsNode* nd = home->children[i];
+        const char* ic = nd->dir ? (nd->children.len ? "folder_full" : "folder")
+                       : str_icontains(nd->name, ".pix") || is_image_name(nd->name) ? "image_file"
+                       : str_icontains(nd->name, ".htm") ? "browser" : "text_file";
+        int x = r.x + drag_dx + (r.w - 64) / 2, y = r.y + drag_dy;
+        c.blit_tinted(icon(ic)->big, x, y, accent(), 50);
+        char shown[24];
+        strlcpy(shown, nd->name, sizeof(shown));
+        if (strlen(nd->name) > 11) { shown[9] = 0; strlcat(shown, G_ELLIP, sizeof(shown)); }
+        int tw = text_width(shown);
+        c.fill_alpha(r.x + drag_dx + (r.w - tw) / 2 - 3, r.y + drag_dy + 67, tw + 6, 14, th::bar_bg, 170);
+        c.text(r.x + drag_dx + (r.w - tw) / 2, r.y + drag_dy + 68, shown, th::white);
+    }
+}
+static bool cell_taken(int col, int row, const bool* moving, int n) {
+    for (int i = 0; i < n; i++) if (!moving[i] && slot_col[i] == col && slot_row[i] == row) return true;
+    return false;
+}
+void desk_drag_drop(int mx, int my) {
+    bool was = desk_dragging;
+    desk_dragging = false;
+    int press = drag_press;
+    drag_press = -1;
+    FsNode* home = fs_home();
+    if (!was || !home || press < 0) { damage(desk_area()); return; }
+    desk_assign();
+    int n = min(home->children.len, 128);
+    // everything that was picked up
+    Vec<FsNode*> items;
+    bool moving[128];
+    for (int i = 0; i < n; i++) { moving[i] = desk_selected(i); if (moving[i]) items.push(home->children[i]); }
+    int res = DROP_NONE;
+    bool handled = false;
+    for (int i = 0; i < items.len; i++) {
+        char p[256];
+        fs_path(items[i], p, sizeof(p));
+        res = ui_drop(mx, my, p, nullptr);
+        if (res == DROP_HANDLED) handled = true;
+        if (res == DROP_TRASH) break;
+    }
+    if (res == DROP_TRASH) {
+        for (int i = 0; i < items.len; i++) fs_trash(items[i]);
+        char b[40];
+        snprintf(b, sizeof(b), "%d item%s", items.len, items.len == 1 ? "" : "s");
+        ui_notify("Moved to Trash", b, "trash");
+        desk_clear_sel();
+    } else if (res == DROP_DESKTOP) {
+        // snap to the grid, keeping the group's shape
+        int rows = desk_rows();
+        int pc = slot_col[press], pr = slot_row[press];
+        Rect pcell = cell_rect(pc, pr);
+        int nc = (pcell.x + drag_dx - 14 + 45) / 90, nr = (pcell.y + drag_dy - TOPBAR_H - 14 + 43) / 86;
+        int dc = clamp(nc, 0, DESK_MAXC - 1) - pc, dr = clamp(nr, 0, rows - 1) - pr;
+        // freeze the current layout so only the dragged icons move
+        for (int i = 0; i < n; i++) desk_set_pos(home->children[i]->name, slot_col[i], slot_row[i]);
+        int newc[128], newr[128];
+        bool placed[128];
+        memset(placed, 0, sizeof(placed));
+        bool occ[DESK_MAXC][DESK_MAXR];
+        memset(occ, 0, sizeof(occ));
+        for (int i = 0; i < n; i++) if (!moving[i]) occ[slot_col[i]][slot_row[i]] = true;
+        for (int i = 0; i < n; i++) {
+            if (!moving[i]) continue;
+            int tc = clamp(slot_col[i] + dc, 0, DESK_MAXC - 1), tr = clamp(slot_row[i] + dr, 0, rows - 1);
+            if (occ[tc][tr]) {
+                int best = -1, bd = 1 << 30;
+                for (int c2 = 0; c2 < DESK_MAXC; c2++)
+                    for (int r2 = 0; r2 < rows; r2++) {
+                        if (occ[c2][r2]) continue;
+                        int d = iabs(c2 - tc) * 3 + iabs(r2 - tr) * 2;
+                        if (d < bd) { bd = d; best = c2 * DESK_MAXR + r2; }
+                    }
+                if (best >= 0) { tc = best / DESK_MAXR; tr = best % DESK_MAXR; }
+            }
+            occ[tc][tr] = true;
+            newc[i] = tc; newr[i] = tr; placed[i] = true;
+        }
+        for (int i = 0; i < n; i++) if (placed[i]) desk_set_pos(home->children[i]->name, newc[i], newr[i]);
+        desk_save_pos();
+    }
+    (void)handled;
+    items.free();
+    damage_all();
+}
+void desk_place_new(FsNode*, int, int) {}
 
 int desk_hit(int x, int y) {
     FsNode* home = fs_home();
@@ -605,7 +811,7 @@ static void desk_menu_fn(void*, int cmd) {
 
 void desk_click(int i, int button, bool dbl, int mx, int my) {
     if (kbd_ctrl_down() && button == 1) { if (i < 128) desk_mask[i] ^= 1; }
-    else if (!desk_selected(i) || button == 1) { memset(desk_mask, 0, sizeof(desk_mask)); if (i < 128) desk_mask[i] = 1; }
+    else if (!desk_selected(i) || (button == 1 && desk_sel_count() <= 1)) { memset(desk_mask, 0, sizeof(desk_mask)); if (i < 128) desk_mask[i] = 1; }
     desk_sel = i;
     desk_menu_node = fs_home()->children[i];
     damage(desk_area());

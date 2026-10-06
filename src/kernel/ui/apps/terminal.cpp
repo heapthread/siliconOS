@@ -64,6 +64,14 @@ struct TerminalApp : App, ShellHost {
         ui_invalidate();
     }
     static void ctx_fn(void* ctx, int cmd) { ((App*)ctx)->on_command(cmd); }
+    bool on_drop(const char* path, int, int) override {
+        if (sh.busy()) return false;
+        char b[270];
+        snprintf(b, sizeof(b), "%s ", path);
+        sh.paste(b);
+        ui_invalidate();
+        return true;
+    }
     bool selecting = false;
     int click_n = 0;
     u64 click_t = 0;

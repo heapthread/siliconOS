@@ -569,7 +569,8 @@ def main():
     make_emoji.main()
     stamp = os.path.join(OUT, ".stamp")
     me = os.path.abspath(__file__)
-    if os.path.exists(stamp) and os.path.getmtime(stamp) >= os.path.getmtime(me):
+    newest = max(os.path.getmtime(me), os.path.getmtime(os.path.join(os.path.dirname(me), "make_icons2.py")))
+    if os.path.exists(stamp) and os.path.getmtime(stamp) >= newest:
         return
     build_icons()
     build_wallpapers()

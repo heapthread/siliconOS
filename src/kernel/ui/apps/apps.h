@@ -28,6 +28,7 @@ App* new_photos(const char* arg);
 App* new_piano(const char* arg);
 App* new_emoji(const char* arg);
 App* new_pdfview(const char* arg);
+App* new_apps(const char* arg);
 App* new_pong(const char* arg);
 App* new_invaders(const char* arg);
 App* new_asteroids(const char* arg);

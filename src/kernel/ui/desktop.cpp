@@ -17,7 +17,7 @@ bool ui_mouse_left = false;
 CursorShape ui_cursor = CUR_ARROW;
 Window* cur_win = nullptr;
 
-enum DragKind { DRAG_NONE, DRAG_MOVE, DRAG_RESIZE, DRAG_CAPTURE, DRAG_DOCK, DRAG_MARQUEE };
+enum DragKind { DRAG_NONE, DRAG_MOVE, DRAG_RESIZE, DRAG_CAPTURE, DRAG_DOCK, DRAG_MARQUEE, DRAG_ICON };
 static bool marquee_on = false;
 static int marquee_x0, marquee_y0;
 static u8 marquee_base[128];
@@ -679,6 +679,7 @@ static void compose_rect(Rect R) {
     draw_launcher(c);
     draw_switcher(c);
     draw_menu(c);
+    draw_desk_drag(c);
     draw_cursor(c);
     c.reset_clip();
 }
@@ -696,6 +697,22 @@ static void compose() {
 }
 
 // ================================================================ input: mouse
+static Window* window_at(int x, int y);
+
+// hand a dragged file to whatever is under the pointer
+int ui_drop(int mx, int my, const char* path, Window* except) {
+    int dh = dock_hit(mx, my);
+    if (dh >= 0) return !strcmp(dock_items[dh].app_id, "trash") ? DROP_TRASH : DROP_NONE;
+    Window* w = window_at(mx, my);
+    if (!w) return my < TOPBAR_H ? DROP_NONE : DROP_DESKTOP;
+    if (w == except) return DROP_NONE;
+    Rect cl = w->client();
+    if (!cl.contains(mx, my)) return DROP_NONE;
+    AppCtx ctx(w);
+    if (w->app->on_drop(path, mx - cl.x, my - cl.y)) { w->dirty = true; damage_window(w); wm_focus(w); return DROP_HANDLED; }
+    return DROP_NONE;
+}
+
 static Window* window_at(int x, int y) {
     if (overview_on) return nullptr;
     for (int i = windows.len - 1; i >= 0; i--)
@@ -800,6 +817,7 @@ static void on_button(int button, bool down) {
 
     if (!down) {
         if (drag == DRAG_CAPTURE && drag_win) send_mouse(drag_win, M_UP, button);
+        else if (drag == DRAG_ICON) desk_drag_drop(mx, my);
         else if (drag == DRAG_DOCK) {
             int hit = dock_hit(mx, my);
             if (hit == dock_press && hit >= 0) dock_click(hit);
@@ -887,7 +905,11 @@ static void on_button(int button, bool down) {
         return;
     }
     int di = desk_hit(mx, my);
-    if (di >= 0) { desk_click(di, button, dbl, mx, my); return; }
+    if (di >= 0) {
+        desk_click(di, button, dbl, mx, my);
+        if (button == 1 && !dbl) { drag = DRAG_ICON; desk_drag_start(mx, my); }
+        return;
+    }
     if (button == 1) {
         if (!kbd_ctrl_down()) desk_clear_sel();
         desk_save_sel(marquee_base);
@@ -950,6 +972,9 @@ static void on_mouse_move(int ox, int oy) {
     }
     case DRAG_CAPTURE:
         if (drag_win) send_mouse(drag_win, M_MOVE, 0);
+        break;
+    case DRAG_ICON:
+        desk_drag_move(mx, my);
         break;
     case DRAG_MARQUEE: {
         Rect prev = {min(marquee_x0, ox), min(marquee_y0, oy), iabs(marquee_x0 - ox) + 1, iabs(marquee_y0 - oy) + 1};

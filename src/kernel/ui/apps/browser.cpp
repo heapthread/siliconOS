@@ -1294,6 +1294,14 @@ struct BrowserApp : App {
     int pref_h() override { return 540 + TAB_H; }
     u32 background() override { return cur()->background(); }
     void open_arg(const char* arg) override { if (arg) cur()->open_arg(arg); }
+    bool on_drop(const char* path, int, int) override {
+        FsNode* n = fs_lookup(path);
+        if (!n || n->dir || !str_icontains(n->name, ".htm")) return false;
+        char u[300];
+        snprintf(u, sizeof(u), "file://%s", path);
+        cur()->open_arg(u);
+        return true;
+    }
     int cursor_at(int x, int y) override { return y < TAB_H ? CUR_ARROW : cur()->cursor_at(x, y - TAB_H); }
     void tick() override {
         for (int i = 0; i < tabs.len; i++) { tabs[i]->win = win; tabs[i]->tick(); }

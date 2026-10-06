@@ -5,6 +5,15 @@ struct WallpapersApp : App {
     Smooth sc;
     ScrollBar sb;
     int cw = 0, ch = 0;
+    bool on_drop(const char* path, int, int) override {
+        FsNode* n = fs_lookup(path);
+        if (!n || n->dir || !is_image_name(n->name)) return false;
+        Image img;
+        if (!image_load(n->data, n->size, img)) return false;
+        int idx = wallpaper_add_custom(n->name, img);
+        if (idx >= 0) wallpaper_set(idx);
+        return true;
+    }
     const char* app_id() override { return "wallpapers"; }
     const char* title() override { return "Wallpapers"; }
     int pref_w() override { return 3 * 148 + 20; }

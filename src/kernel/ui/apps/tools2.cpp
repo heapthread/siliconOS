@@ -630,6 +630,14 @@ struct ArchiveApp : App {
         else ui_notify("Archive", "couldn't write the archive", "archive");
     }
 
+    bool on_drop(const char* path, int, int) override {
+        FsNode* n = fs_lookup(path);
+        if (!n) return false;
+        if (!n->dir && str_icontains(n->name, ".zip") && !create_mode) { open_arg(path); return true; }
+        create_mode = true;
+        add_path(path);
+        return true;
+    }
     int count() { return create_mode ? pend.len : entries.len; }
     int content_h() { return count() * ROW + 8; }
     void tick() override { if (sc.step()) ui_invalidate(); }

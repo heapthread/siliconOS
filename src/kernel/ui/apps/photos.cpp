@@ -92,6 +92,12 @@ struct PhotosApp : App {
         set_title(title());
         ui_invalidate();
     }
+    bool on_drop(const char* path, int, int) override {
+        FsNode* n = fs_lookup(path);
+        if (!n || n->dir || !is_image_name(n->name)) return false;
+        open_arg(path);
+        return true;
+    }
     void open_arg(const char* path) override {
         FsNode* f = fs_lookup(path);
         if (!f) return;

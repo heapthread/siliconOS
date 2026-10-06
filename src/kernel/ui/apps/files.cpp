@@ -77,6 +77,28 @@ struct FilesApp : App {
         ui_invalidate();
     }
     void open_arg(const char* arg) override { go(arg); }
+    // something dragged in from another window or the desktop
+    bool on_drop(const char* p, int x, int y) override {
+        FsNode* src = fs_lookup(p);
+        if (!src || src == fs_root()) return false;
+        FsNode* d = dir();
+        int t = hit(x, y);
+        if (t >= 0 && d->children[t]->dir) d = d->children[t];
+        else if (!content().contains(x, y)) {
+            int pl = place_hit(x, y);
+            if (pl < 0) return false;
+            d = fs_lookup(places[pl].path);
+            if (!d) return false;
+        }
+        if (src->parent == d || src == d || (src->dir && fs_is_ancestor(src, d))) return false;
+        if (d == fs_trash_dir()) { fs_trash(src); return true; }
+        char nm[FS_NAME_MAX];
+        fs_unique_name(d, src->name, nm, sizeof(nm));
+        if (!fs_move(src, d, nm)) return false;
+        multi.clear();
+        sel = -1;
+        return true;
+    }
     void go_back() {
         if (!back.len) return;
         char* p = back.back();
@@ -426,6 +448,29 @@ struct FilesApp : App {
                     items.free();
                     multi.clear();
                     sel = -1;
+                } else if (src && !dst) {
+                    // dropped outside this window: another app, the desktop or the trash
+                    Rect cl = win->client();
+                    int sx = cl.x + e.x, sy = cl.y + e.y;
+                    if (!win->r.contains(sx, sy)) {
+                        Vec<FsNode*> items;
+                        picked(items);
+                        if (!picked_has(src)) { items.clear(); items.push(src); }
+                        for (int i = 0; i < items.len; i++) {
+                            char path_i[256];
+                            fs_path(items[i], path_i, sizeof(path_i));
+                            int res = ui_drop(sx, sy, path_i, win);
+                            if (res == DROP_TRASH) fs_trash(items[i]);
+                            else if (res == DROP_DESKTOP && items[i]->parent != fs_home()) {
+                                char nm[FS_NAME_MAX];
+                                fs_unique_name(fs_home(), items[i]->name, nm, sizeof(nm));
+                                fs_move(items[i], fs_home(), nm);
+                            }
+                        }
+                        items.free();
+                        multi.clear();
+                        sel = -1;
+                    }
                 }
             } else if (e.button == 1) {
                 if (press_multi && press_item >= 0 && press_item < d->children.len && !kbd_ctrl_down() && !kbd_shift_down()) { multi.clear(); sel = anchor = press_item; }

@@ -5,7 +5,7 @@ from PIL import ImageDraw
 
 NAMES = ["calendar", "tasks", "hex", "storage", "convert", "palette", "capture", "weather", "typing", "network",
          "archive", "pong", "invaders", "asteroids", "runner", "connect4", "memory", "wordy", "sudoku",
-         "solitaire", "chess", "emoji"]
+         "solitaire", "chess", "emoji", "apps", "notifications", "firewall", "docs", "mail", "fonts", "module"]
 
 DARK = (30, 26, 52, 255)
 RED = (229, 72, 106, 255)
@@ -235,9 +235,73 @@ def icon_emoji():
     return im
 
 
+def icon_apps():
+    im, d = tile((52, 46, 72, 255))
+    cols = (TEAL, PINK, GOLD, VIOLET_LT, GREEN, BLUE, YEL, RED, WHITE)
+    for i in range(9):
+        x, y = 6 + (i % 3) * 8, 6 + (i // 3) * 8
+        rect(d, x, y, x + 5, y + 5, cols[i])
+    return im
+
+
+def icon_notifications():
+    im = new(); d = ImageDraw.Draw(im)
+    d.polygon([(16, 4), (22, 8), (23, 18), (27, 23), (5, 23), (9, 18), (10, 8)], fill=GOLD)
+    d.ellipse([13, 22, 19, 28], fill=GOLD_DK)
+    rect(d, 15, 2, 17, 4, GOLD)
+    d.ellipse([20, 3, 28, 11], fill=RED)
+    return im
+
+
+def icon_firewall():
+    im, d = tile((120, 44, 52, 255))
+    for r in range(4):
+        y = 5 + r * 6
+        rect(d, 4, y, 27, y + 4, (214, 112, 70, 255))
+        off = 4 if r % 2 else 0
+        for x in range(4 + off, 27, 8):
+            rect(d, x, y, x, y + 4, (120, 44, 52, 255))
+    d.polygon([(16, 8), (23, 12), (21, 22), (16, 25), (11, 22), (9, 12)], fill=YEL)
+    return im
+
+
+def icon_docs():
+    im = new(); d = ImageDraw.Draw(im)
+    rect(d, 6, 3, 25, 29, WHITE)
+    rect(d, 6, 3, 25, 8, BLUE)
+    for y in (12, 16, 20, 24):
+        rect(d, 9, y, 22 if y != 24 else 16, y + 1, GREY)
+    return im
+
+
+def icon_mail():
+    im = new(); d = ImageDraw.Draw(im)
+    rect(d, 3, 7, 28, 25, WHITE)
+    d.polygon([(3, 7), (28, 7), (15, 18)], fill=GREY)
+    d.line([(3, 25), (12, 15)], fill=GREY)
+    d.line([(28, 25), (19, 15)], fill=GREY)
+    rect(d, 3, 7, 28, 8, VIOLET)
+    return im
+
+
+def icon_fonts():
+    im, d = tile(CHIP, CHIP_HI)
+    rect(d, 7, 8, 17, 10, WHITE); rect(d, 11, 8, 13, 24, WHITE)
+    rect(d, 17, 14, 25, 16, PINK); rect(d, 20, 14, 22, 24, PINK)
+    return im
+
+
+def icon_module():
+    im, d = tile(DARK)
+    rect(d, 7, 7, 15, 15, TEAL); rect(d, 17, 7, 25, 15, VIOLET_LT)
+    rect(d, 7, 17, 15, 25, GOLD); rect(d, 17, 17, 25, 25, PINK)
+    rect(d, 14, 14, 18, 18, WHITE)
+    return im
+
+
 def build(m):
     """m is the make_art module: borrow its helpers and write every icon."""
-    for k in ("new", "rect", "save_icon", "INK", "CHIP", "CHIP_HI", "GOLD", "VIOLET", "VIOLET_LT", "VIOLET_DK", "PINK", "TEAL", "WHITE"):
+    for k in ("new", "rect", "save_icon", "INK", "CHIP", "CHIP_HI", "GOLD", "GOLD_DK", "VIOLET", "VIOLET_LT", "VIOLET_DK", "PINK", "TEAL", "WHITE"):
         globals()[k] = getattr(m, k)
     for n in NAMES:
         m.save_icon(globals()["icon_" + n](), n)

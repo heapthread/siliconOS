@@ -58,6 +58,13 @@ ICONS = [
     ("solitaire", "silicon/icons/solitaire.png"),
     ("chess", "silicon/icons/chess.png"),
     ("emoji", "silicon/icons/emoji.png"),
+    ("apps", "silicon/icons/apps.png"),
+    ("notifications", "silicon/icons/notifications.png"),
+    ("firewall", "silicon/icons/firewall.png"),
+    ("docs", "silicon/icons/docs.png"),
+    ("mail", "silicon/icons/mail.png"),
+    ("fonts", "silicon/icons/fonts.png"),
+    ("module", "silicon/icons/module.png"),
 ]
 WALLPAPERS = [
     ("wafer", "silicon/wallpapers/wafer.png"),

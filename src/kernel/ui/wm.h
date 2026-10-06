@@ -109,6 +109,9 @@ public:
     virtual bool resizable() { return true; }
     virtual void open_arg(const char* arg) {}         // e.g. a path for a running app
     virtual bool wants_ibeam(int x, int y) { return false; }
+    // a file or folder was dropped on the window (path inside SiliconFS, x/y relative to the client area);
+    // return true when the app took it
+    virtual bool on_drop(const char* path, int x, int y) { return false; }
     virtual bool hover_effects() { return true; }      // re-render while the mouse moves over it
     virtual int  cursor_at(int x, int y) { return wants_ibeam(x, y) ? 2 : 0; }   // a CursorShape
 
@@ -161,6 +164,10 @@ void    wm_minimize(Window* w);
 void    wm_toggle_max(Window* w);
 void    wm_set_geometry(Window* w, Rect r);
 void    wallpaper_set(int i);
+
+// drag and drop between windows: where a dragged file landed
+enum { DROP_NONE, DROP_HANDLED, DROP_DESKTOP, DROP_TRASH };
+int ui_drop(int screen_x, int screen_y, const char* path, Window* except);
 
 // app launching (apps.cpp)
 App*  launch(const char* app_id, const char* arg = nullptr);    // focuses existing single-instance apps

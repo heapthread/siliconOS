@@ -304,6 +304,12 @@ struct HexApp : App {
         FsNode* f = fs_lookup(p);
         if (f && !f->dir) { file = f; sc.jump(0); ui_invalidate(); }
     }
+    bool on_drop(const char* p, int, int) override {
+        FsNode* f = fs_lookup(p);
+        if (!f || f->dir) return false;
+        open_arg(p);
+        return true;
+    }
     int rows() { return file ? (int)((file->size + 15) / 16) : 0; }
     int content_h() { return rows() * ROWH + 8; }
     void tick() override { if (sc.step()) ui_invalidate(); }

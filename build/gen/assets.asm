@@ -3,7 +3,7 @@ section .rdata
 global asset_table
 global asset_count
 align 8
-asset_count: dq 65
+asset_count: dq 72
 asset_table:
     dq name0, data0, 2151
     dq name1, data1, 1497
@@ -61,15 +61,22 @@ asset_table:
     dq name53, data53, 738
     dq name54, data54, 790
     dq name55, data55, 700
-    dq name56, data56, 55072
-    dq name57, data57, 21724
-    dq name58, data58, 26496
-    dq name59, data59, 520388
-    dq name60, data60, 638793
-    dq name61, data61, 394562
-    dq name62, data62, 394407
-    dq name63, data63, 599722
-    dq name64, data64, 39548
+    dq name56, data56, 1038
+    dq name57, data57, 674
+    dq name58, data58, 1182
+    dq name59, data59, 660
+    dq name60, data60, 718
+    dq name61, data61, 806
+    dq name62, data62, 914
+    dq name63, data63, 55072
+    dq name64, data64, 21724
+    dq name65, data65, 26496
+    dq name66, data66, 520388
+    dq name67, data67, 638793
+    dq name68, data68, 394562
+    dq name69, data69, 394407
+    dq name70, data70, 599722
+    dq name71, data71, 39548
 name0: db "icon/terminal", 0
 align 8
 data0: incbin "sil/a00.sil"
@@ -238,30 +245,51 @@ data54: incbin "sil/a54.sil"
 name55: db "icon/emoji", 0
 align 8
 data55: incbin "sil/a55.sil"
-name56: db "wall/wafer", 0
+name56: db "icon/apps", 0
 align 8
 data56: incbin "sil/a56.sil"
-name57: db "wall/circuit dusk", 0
+name57: db "icon/notifications", 0
 align 8
 data57: incbin "sil/a57.sil"
-name58: db "wall/silicon valley", 0
+name58: db "icon/firewall", 0
 align 8
 data58: incbin "sil/a58.sil"
-name59: db "wall/sunset mountains", 0
+name59: db "icon/docs", 0
 align 8
 data59: incbin "sil/a59.sil"
-name60: db "wall/night hills", 0
+name60: db "icon/mail", 0
 align 8
 data60: incbin "sil/a60.sil"
-name61: db "wall/starry night", 0
+name61: db "icon/fonts", 0
 align 8
 data61: incbin "sil/a61.sil"
-name62: db "wall/distant city", 0
+name62: db "icon/module", 0
 align 8
 data62: incbin "sil/a62.sil"
-name63: db "wall/foggy valley", 0
+name63: db "wall/wafer", 0
 align 8
 data63: incbin "sil/a63.sil"
-name64: db "emoji/sheet", 0
+name64: db "wall/circuit dusk", 0
 align 8
 data64: incbin "sil/a64.sil"
+name65: db "wall/silicon valley", 0
+align 8
+data65: incbin "sil/a65.sil"
+name66: db "wall/sunset mountains", 0
+align 8
+data66: incbin "sil/a66.sil"
+name67: db "wall/night hills", 0
+align 8
+data67: incbin "sil/a67.sil"
+name68: db "wall/starry night", 0
+align 8
+data68: incbin "sil/a68.sil"
+name69: db "wall/distant city", 0
+align 8
+data69: incbin "sil/a69.sil"
+name70: db "wall/foggy valley", 0
+align 8
+data70: incbin "sil/a70.sil"
+name71: db "emoji/sheet", 0
+align 8
+data71: incbin "sil/a71.sil"
