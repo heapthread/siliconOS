@@ -3,7 +3,7 @@ section .rdata
 global asset_table
 global asset_count
 align 8
-asset_count: dq 41
+asset_count: dq 43
 asset_table:
     dq name0, data0, 2151
     dq name1, data1, 1497
@@ -38,14 +38,16 @@ asset_table:
     dq name30, data30, 816
     dq name31, data31, 850
     dq name32, data32, 1444
-    dq name33, data33, 55072
-    dq name34, data34, 21724
-    dq name35, data35, 26496
-    dq name36, data36, 520388
-    dq name37, data37, 638793
-    dq name38, data38, 394562
-    dq name39, data39, 394407
-    dq name40, data40, 599722
+    dq name33, data33, 820
+    dq name34, data34, 55072
+    dq name35, data35, 21724
+    dq name36, data36, 26496
+    dq name37, data37, 520388
+    dq name38, data38, 638793
+    dq name39, data39, 394562
+    dq name40, data40, 394407
+    dq name41, data41, 599722
+    dq name42, data42, 39548
 name0: db "icon/terminal", 0
 align 8
 data0: incbin "sil/a00.sil"
@@ -145,27 +147,33 @@ data31: incbin "sil/a31.sil"
 name32: db "icon/piano", 0
 align 8
 data32: incbin "sil/a32.sil"
-name33: db "wall/wafer", 0
+name33: db "icon/pdf", 0
 align 8
 data33: incbin "sil/a33.sil"
-name34: db "wall/circuit dusk", 0
+name34: db "wall/wafer", 0
 align 8
 data34: incbin "sil/a34.sil"
-name35: db "wall/silicon valley", 0
+name35: db "wall/circuit dusk", 0
 align 8
 data35: incbin "sil/a35.sil"
-name36: db "wall/sunset mountains", 0
+name36: db "wall/silicon valley", 0
 align 8
 data36: incbin "sil/a36.sil"
-name37: db "wall/night hills", 0
+name37: db "wall/sunset mountains", 0
 align 8
 data37: incbin "sil/a37.sil"
-name38: db "wall/starry night", 0
+name38: db "wall/night hills", 0
 align 8
 data38: incbin "sil/a38.sil"
-name39: db "wall/distant city", 0
+name39: db "wall/starry night", 0
 align 8
 data39: incbin "sil/a39.sil"
-name40: db "wall/foggy valley", 0
+name40: db "wall/distant city", 0
 align 8
 data40: incbin "sil/a40.sil"
+name41: db "wall/foggy valley", 0
+align 8
+data41: incbin "sil/a41.sil"
+name42: db "emoji/sheet", 0
+align 8
+data42: incbin "sil/a42.sil"
