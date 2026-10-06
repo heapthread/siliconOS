@@ -364,7 +364,7 @@ static void load_font_program(PdfFont* f, Obj* desc) {
     u8* data = pdf_stream_copy(f->d, s, &len);
     if (!data || len < 4) { if (data) kfree(data); return; }
     f->fdata = data;
-    if (data[0] == 0 && data[1] == 1 && data[2] == 0 && data[3] == 0 || !memcmp(data, "true", 4) || !memcmp(data, "OTTO", 4) || !memcmp(data, "ttcf", 4)) {
+    if ((data[0] == 0 && data[1] == 1 && data[2] == 0 && data[3] == 0) || !memcmp(data, "true", 4) || !memcmp(data, "OTTO", 4) || !memcmp(data, "ttcf", 4)) {
         f->tt = tt_open(data, len, 0);
         if (f->tt) {
             if (tt_is_cff(f->tt)) {

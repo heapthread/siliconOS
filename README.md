@@ -56,6 +56,7 @@ on QEMU's user-mode network, so the internet works with no setup.
 | desktop | `src/kernel/ui/` | compositor with damage tracking and per-window surfaces, window manager with animations, snapping and overview, top bar, the silicon-die dock, launcher, alt-tab, notifications, screensaver |
 | web | `src/kernel/ui/html.cpp`, `css.cpp`, `apps/browser.cpp` | HTML tokenizer and flow layout; a CSS engine (selectors, cascade, `!important`, `@media`, custom properties) for display, colours, backgrounds, borders, fonts, margins, padding and centred columns; the Beam browser |
 | images | `src/kernel/gfx/imgdec.cpp` | PNG (with its own inflate), GIF, JPEG (baseline and progressive) and BMP decoders |
+| pdf | `src/kernel/pdf/` | a PDF reader: object parser (xref tables and streams, object streams, repair of broken files), filters (Flate, LZW, ASCII85, ASCIIHex, RunLength, predictors), an anti-aliased rasterizer with stroking, dashes and clipping, colour spaces and functions, shadings, images, TrueType / CFF / Type 1 font parsers with a bitmap-font fallback, annotations and text extraction. `tools/pdftest/` is a host harness that renders a PDF to a PPM |
 | art | `tools/make_art.py`, `tools/assets.py` | generates silicon's own icons and wallpapers; every PNG is packed into a compressed `.sil` blob linked into the kernel |
 | font | `tools/font.txt` | silicon's own 8x12 pixel font, hand-drawn as ASCII art |
 
@@ -79,6 +80,7 @@ on QEMU's user-mode network, so the internet works with no setup.
   - Drag a window to the left or right edge to snap it to half the screen, or to the top to maximize.
 - **Overview** (F3) shows every window at once. **Alt+tab** shows live thumbnails.
 - **Scrolling**: the mouse wheel scrolls smoothly everywhere, and scrollbars can be dragged.
+- **Clipboard**: copies inside silicon also go to the host clipboard and host copies come back in. It carries text, including emoji. Files has its own file clipboard.
 - **Desktop icons** show what's in `/home`. Double-click to open; right-click for a menu.
 - **Screensaver**: after 5 idle minutes (or from the system menu), a warp through stars and chips.
 
@@ -94,17 +96,37 @@ on QEMU's user-mode network, so the internet works with no setup.
 ### Apps
 
 - **Beam**, the web browser.
+  - Tabs (`ctrl+t` new, `ctrl+w` close, `ctrl+tab` switch, middle-click a tab to close it).
   - Navigation: links, back/forward, bookmarks and history.
-  - Pages: CSS (from `<style>`, linked style sheets and `style=""`), forms (GET and POST), pictures, view source and save page.
+  - Find in page (`ctrl+f`, Enter / shift+Enter to step), text selection by dragging or double-clicking, `ctrl+c` copy, `ctrl+a` select all, and a right-click menu (open link, open in new tab, copy link address, copy, back, reload, find, source).
+  - Pages: CSS (from `<style>`, linked style sheets and `style=""`), forms (GET and POST, with paste), pictures, large emoji in headings, view source and save page.
+  - A PDF link is downloaded to `/home/downloads` and opens in the PDF viewer.
   - View > Page styles turns CSS off.
   - Type words in the address bar to search with DuckDuckGo Lite.
   - Sites that work well: text.npr.org, lite.cnn.com, Hacker News, Wikipedia, xkcd, wiby.me and 68k.news.
+- **PDF**: continuous scrolling, zoom and fit-to-width, an outline sidebar, text selection (drag, double-click, `ctrl+a`) with `ctrl+c`, and find (`ctrl+f`). Open a `.pdf` from Files, Beam or the shell (`open file.pdf`). Not supported yet: encrypted files, CCITT / JBIG2 / JPX images and mesh shadings.
 - **Photos**: a gallery of every picture in SiliconFS and a viewer (fit, zoom, pan, next/previous).
-- **Terminal**, **Files**, **Slate** (text editor), **Pixel** (pixel painter), **Calculator**, **Monitor**,
-  **Settings**, **Wallpapers**, **Clock**, **Piano** (two octaves on the PC speaker, with recording and
-  a demo tune), **Trash** and **About**.
-- **Games**: Stacker (falling blocks with hold and a ghost piece), 2048, Breakout (power-ups and five
-  level layouts), Flappy Chip, Minesweeper, Snake and Reversi. High scores are saved in `/home/games`.
+- **Terminal**: select with the mouse (double-click a word, triple-click a line), `ctrl+shift+c` (or `ctrl+c` while something is selected) copies, `ctrl+v` pastes, right-click for a menu, and emoji show up as pictures.
+- **Files**: multi-select with ctrl-click, shift-click, a rubber band or `ctrl+a`; copy, cut and paste files with `ctrl+c` / `ctrl+x` / `ctrl+v`; drag several items at once.
+- **Slate** (text editor), **Pixel** (pixel painter), **Calculator**, **Monitor**, **Settings**, **Wallpapers**,
+  **Clock**, **Piano** (two octaves on the PC speaker, with recording and a demo tune), **Emoji** (a picker
+  that copies to the clipboard), **Trash** and **About**.
+- **Utilities**:
+  - **Calendar**: month view with events saved in `~/.config/calendar`.
+  - **Tasks**: a to-do list.
+  - **Hex**: a hex viewer for any file.
+  - **Storage**: what fills the disk, by folder and the largest files.
+  - **Convert**: unit converter (length, mass, temperature, data, time, speed, area).
+  - **Palette**: an HSV colour picker with saved swatches.
+  - **Capture**: screenshots with a delay, saved as BMP in `/home/pictures`.
+  - **Weather**: a forecast from wttr.in.
+  - **Typing**: a typing speed test.
+  - **Network**: interface details, connections and ping.
+  - **Archive**: opens and extracts `.zip` files (stored and deflate) and creates new ones.
+- **Games** (open them from the Games library; high scores are saved in `/home/games`):
+  - Arcade: Stacker (falling blocks with hold and a ghost piece), 2048, Breakout (power-ups and five level layouts), Flappy Chip, Snake, Pong, Invaders, Asteroids and Runner.
+  - Boards and cards: Minesweeper, Reversi, Connect Four, Memory, Sudoku, Solitaire (Klondike) and Chess (you play white against a small alpha-beta engine; castling, en passant and promotion to a queen are supported).
+  - Words: Wordy.
 
 ## Shells
 
@@ -134,8 +156,18 @@ wget -O /home/pictures/cat.jpg https://...   netstat   lspci   setup   ui   rebo
 
 The icons in `art/icons` and the wallpapers in `art/wallpapers` come from the AetherOS project.
 The icons and wallpapers in `art/silicon` (chip, calculator, pixel, clock, launcher, browser,
-photos, piano, the game icons, wafer, circuit dusk, silicon valley and others) are generated by
-`tools/make_art.py`.
+photos, piano, pdf, emoji, the utility and game icons, wafer, circuit dusk, silicon valley and others) are generated by
+`tools/make_art.py` and `tools/make_icons2.py`.
+
+## Testing the PDF engine on the host
+
+`sh tools/pdftest/build.sh` compiles the PDF code with the host `g++` into `tools/pdftest/pdftest.exe`:
+
+```bash
+tools/pdftest/pdftest.exe file.pdf info             # pages, title, outline
+tools/pdftest/pdftest.exe file.pdf 1 1.5 out.ppm    # render page 1 at 1.5x
+tools/pdftest/pdftest.exe file.pdf text 1           # extracted text of page 1
+```
 
 ## Testing headless
 
