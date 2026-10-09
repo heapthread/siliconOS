@@ -53,6 +53,8 @@ public:
 
     void start_program(class ConsoleProgram* p);
     bool prog_keep_screen = false;         // leave a finished program's output on screen
+    char* after_cmd = nullptr;             // run this line (as root when after_root) once the current program ends
+    bool after_root = false;
 
     Vec<char*> history;
     Vec<ShellVar> vars;
@@ -88,6 +90,7 @@ private:
 
 // console programs (term/programs.cpp)
 ConsoleProgram* make_editor(Console* c, FsNode* file, const char* path);
+ConsoleProgram* make_password_prompt(Shell* sh, const char* cmd);     // sudo
 ConsoleProgram* make_snake(Console* c);
 ConsoleProgram* make_rain(Console* c);
 ConsoleProgram* make_life(Console* c);

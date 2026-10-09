@@ -10,26 +10,26 @@
 
 // ---------------------------------------------------------------- theme
 namespace th {
-static const u32 ink      = 0xFF1A1428;
-static const u32 paper    = 0xFFEEEAF6;
-static const u32 panel    = 0xFFE0DAEE;
-static const u32 panel_dk = 0xFFCBC3DF;
-static const u32 border   = 0xFF8A7EA8;
-static const u32 text     = 0xFF221C30;
-static const u32 muted    = 0xFF746A8C;
+static const u32 ink      = 0xFF14171C;
+static const u32 paper    = 0xFFF5F6F8;
+static const u32 panel    = 0xFFEAECF0;
+static const u32 panel_dk = 0xFFD6D9E0;
+static const u32 border   = 0xFFC8CCD5;
+static const u32 text     = 0xFF1C1F26;
+static const u32 muted    = 0xFF667085;
 static const u32 white    = 0xFFFFFFFF;
 static const u32 hilite   = 0xFFFFFFFF;
-static const u32 shadow   = 0xFF9C92B8;
-static const u32 red      = 0xFFE5486A;
-static const u32 green    = 0xFF3FB27F;
-static const u32 gold     = 0xFFECBC5C;
-static const u32 gold_dk  = 0xFFAA7830;
-static const u32 bar_bg   = 0xFF141020;
+static const u32 shadow   = 0xFFA9AEBB;
+static const u32 red      = 0xFFE5484D;
+static const u32 green    = 0xFF2FA66A;
+static const u32 gold     = 0xFFF0A020;
+static const u32 gold_dk  = 0xFFB47410;
+static const u32 bar_bg   = 0xFF1B1E25;
 }
 
-static const int TOPBAR_H = 24;
-static const int TITLE_H = 24;
-static const int BORDER = 3;
+static const int TOPBAR_H = 28;
+static const int TITLE_H = 32;
+static const int BORDER = 1;
 
 // ---------------------------------------------------------------- assets
 struct Icon {
@@ -56,7 +56,8 @@ struct MouseEv {
     bool left;         // left button held
 };
 
-enum CursorShape { CUR_ARROW, CUR_HAND, CUR_IBEAM, CUR_MOVE, CUR_RESIZE, CUR_CROSS, CUR_WAIT };
+enum CursorShape { CUR_ARROW, CUR_HAND, CUR_IBEAM, CUR_MOVE, CUR_RESIZE, CUR_CROSS, CUR_WAIT, CUR_RESIZE_H, CUR_RESIZE_V, CUR_RESIZE_NESW };
+const Image* cursor_image(int shape);   // smooth cursor art (ui/assets.cpp), nullptr when missing
 extern CursorShape ui_cursor;
 void ui_invalidate();                  // inside an app call: that window re-renders; else full repaint
 void ui_invalidate_all();              // every window re-renders (theme / global state changed)
@@ -183,6 +184,7 @@ int ui_drop(int screen_x, int screen_y, const char* path, Window* except);
 // app launching (apps.cpp)
 App*  launch(const char* app_id, const char* arg = nullptr);    // focuses existing single-instance apps
 void  open_path(const char* path);                               // open a file/dir with the right app
+const char* file_icon_name(const char* name, bool dir, bool has_children);   // icon for a file or folder
 const char* app_display_name(const char* app_id);
 struct AppInfo { const char* id; const char* name; const char* desc; bool single; bool in_dock; };
 extern const AppInfo app_infos[];

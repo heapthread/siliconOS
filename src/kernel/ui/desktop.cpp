@@ -1,6 +1,10 @@
 // silicon - the desktop core: damage-tracking compositor, window manager with animated
 // windows, edge snapping, the overview (expose) and the input/frame loop
 #include "desk.h"
+#include "../proc/proc.h"
+#include "../drv/audio.h"
+#include "../drv/blk.h"
+#include "../fs/drives.h"
 #include "../arch/arch.h"
 #include "../term/shell.h"
 #include "../display.h"
@@ -28,7 +32,7 @@ static Rect marquee_rect() {
 }
 static DragKind drag = DRAG_NONE;
 static Window* drag_win = nullptr;
-static int drag_dx, drag_dy, drag_w0, drag_h0;
+static int drag_dx, drag_dy, drag_w0, drag_h0, drag_x0, drag_y0, drag_zone;
 static Window* title_press = nullptr;
 static Window* hover_win = nullptr;
 
@@ -87,7 +91,7 @@ void damage(Rect r) {
 void damage_all() { dmg[0] = {0, 0, SW, SH}; dmg_n = 1; }
 
 Rect window_bounds(Window* w) {
-    Rect b = {w->r.x, w->r.y, w->r.w + 7, w->r.h + 7};
+    Rect b = {w->r.x - 16, w->r.y - 14, w->r.w + 32, w->r.h + 36};
     if (w->anim != A_NONE) b = rect_union(b, rect_union(grow(w->anim_from, 8), grow(w->anim_to, 8)));
     return b;
 }
@@ -133,7 +137,16 @@ static Image fit_cover(const Image& src, int dw, int dh) {
             u32 p00 = src.px[y0 * src.w + x0], p10 = src.px[y0 * src.w + x1];
             u32 p01 = src.px[y1 * src.w + x0], p11 = src.px[y1 * src.w + x1];
             u32 top = blend(p00, p10, (u32)wx), bot = blend(p01, p11, (u32)wx);
-            out.px[y * dw + x] = blend(top, bot, (u32)wy);
+            u32 v = blend(top, bot, (u32)wy);
+            // a whisper of noise keeps smooth gradients from banding
+            u32 hsh = (u32)(x * 374761393u + y * 668265263u);
+            hsh = (hsh ^ (hsh >> 13)) * 1274126177u;
+            int dn = (int)((hsh >> 16) & 3) == 0 ? 1 : (int)((hsh >> 16) & 3) == 1 ? -1 : 0;
+            if (dn) {
+                int r = (int)((v >> 16) & 255) + dn, g = (int)((v >> 8) & 255) + dn, b = (int)(v & 255) + dn;
+                v = rgb((u32)clamp(r, 0, 255), (u32)clamp(g, 0, 255), (u32)clamp(b, 0, 255));
+            }
+            out.px[y * dw + x] = v;
         }
     }
     return out;
@@ -241,7 +254,7 @@ bool wm_focused_covers(int x, int y) {
     return false;
 }
 
-static Rect work_area() { return {0, TOPBAR_H, SW, SH - TOPBAR_H - 118}; }
+static Rect work_area() { return {0, TOPBAR_H, SW, SH - TOPBAR_H - 100}; }
 
 static void start_anim(Window* w, int kind, Rect from, Rect to, u32 dur) {
     damage_window(w);
@@ -289,8 +302,8 @@ Window* wm_open(App* app, int w, int h, int x, int y) {
         app->on_resize(win->client().w, win->client().h);
     }
     // grow out of a slightly smaller copy of itself
-    Rect small{x + w / 16, y + h / 16, w - w / 8, h - h / 8};
-    start_anim(win, A_OPEN, small, win->r, 190);
+    Rect small{x + w / 40, y + h / 40, w - w / 20, h - h / 20};
+    start_anim(win, A_OPEN, small, win->r, 140);
     focus_changed(old);
     return win;
 }
@@ -305,10 +318,10 @@ void wm_close(Window* w) {
     if (hover_win == w) hover_win = nullptr;
     if (popup.open && popup.ctx_win == w) menu_close();
     if (overview_pick == w) overview_pick = nullptr;
-    Rect small{w->r.x + w->r.w / 12, w->r.y + w->r.h / 12, w->r.w - w->r.w / 6, w->r.h - w->r.h / 6};
+    Rect small{w->r.x + w->r.w / 40, w->r.y + w->r.h / 40, w->r.w - w->r.w / 20, w->r.h - w->r.h / 20};
     if (w->minimized) graveyard.push(w);
     else {
-        start_anim(w, A_CLOSE, w->r, small, 150);
+        start_anim(w, A_CLOSE, w->r, small, 100);
         closing.push(w);
     }
     focus_changed(old == w ? nullptr : old);
@@ -322,7 +335,7 @@ void wm_focus(Window* w) {
     Window* old = wm_focused();
     if (w->minimized) {
         w->minimized = false;
-        start_anim(w, A_RESTORE, dock_icon_rect(w->app->app_id()), w->r, 240);
+        start_anim(w, A_RESTORE, dock_icon_rect(w->app->app_id()), w->r, 200);
     }
     windows.remove(i);
     windows.push(w);
@@ -334,7 +347,7 @@ void wm_minimize(Window* w) {
     if (w->minimized) return;
     Window* old = wm_focused();
     w->minimized = true;
-    start_anim(w, A_MIN, w->r, dock_icon_rect(w->app->app_id()), 260);
+    start_anim(w, A_MIN, w->r, dock_icon_rect(w->app->app_id()), 200);
     focus_changed(old);
 }
 
@@ -351,7 +364,7 @@ void wm_set_geometry(Window* w, Rect r) {
         AppCtx ctx(w);
         w->app->on_resize(w->client().w, w->client().h);
     }
-    start_anim(w, A_GEOM, from, r, 170);
+    start_anim(w, A_GEOM, from, r, 120);
 }
 
 void wm_toggle_max(Window* w) {
@@ -375,26 +388,54 @@ bool hover_in(Window* w, int x, int y, int ww, int hh) {
 }
 
 // ================================================================ window rendering (into the window's own surface)
-static Rect btn_close(Window* w) { return {w->r.x + w->r.w - BORDER - 22, w->r.y + 4, 18, 16}; }
-static Rect btn_max(Window* w) { return {w->r.x + w->r.w - BORDER - 42, w->r.y + 4, 18, 16}; }
-static Rect btn_min(Window* w) { return {w->r.x + w->r.w - BORDER - 62, w->r.y + 4, 18, 16}; }
-static Rect grip(Window* w) { return {w->r.x + w->r.w - 14, w->r.y + w->r.h - 14, 14, 14}; }
+static const int WIN_R = 10;                    // corner radius of a window
+static Rect btn_close(Window* w) { return {w->r.x + w->r.w - 6 - 34, w->r.y + 4, 34, 24}; }
+static Rect btn_max(Window* w) { return {w->r.x + w->r.w - 6 - 34 - 36, w->r.y + 4, 34, 24}; }
+static Rect btn_min(Window* w) {
+    int off = w->resizable ? 72 : 36;
+    return {w->r.x + w->r.w - 6 - 34 - off, w->r.y + 4, 34, 24};
+}
+
+// which edges of the window the pointer grabs for resizing
+enum { Z_L = 1, Z_R = 2, Z_T = 4, Z_B = 8 };
+static int resize_zone(Window* w, int mx, int my) {
+    if (!w->resizable || w->maximized || w->minimized || !w->r.contains(mx, my)) return 0;
+    int z = 0;
+    if (mx >= w->r.x + w->r.w - 5) z |= Z_R;
+    if (my >= w->r.y + w->r.h - 5) z |= Z_B;
+    if (mx < w->r.x + 5) z |= Z_L;
+    if (my < w->r.y + 3) z |= Z_T;
+    return z;
+}
+
+static CursorShape zone_cursor(int z) {
+    if ((z & Z_L && z & Z_T) || (z & Z_R && z & Z_B)) return CUR_RESIZE;
+    if ((z & Z_R && z & Z_T) || (z & Z_L && z & Z_B)) return CUR_RESIZE_NESW;
+    return z & (Z_L | Z_R) ? CUR_RESIZE_H : CUR_RESIZE_V;
+}
 
 static void draw_title_button(Canvas& c, Window* w, Rect sb, int kind, bool focused) {
     bool hot = sb.contains(ui_mouse_x, ui_mouse_y) && hover_win == w;
     Rect b{sb.x - w->r.x, sb.y - w->r.y, sb.w, sb.h};
-    u32 face = hot ? (kind == 2 ? th::red : blend(th::paper, accent(), 90)) : (focused ? blend(accent(), th::white, 70) : th::panel);
     bool pressed = hot && ui_mouse_left && title_press == w;
-    draw_bevel(c, b.x, b.y, b.w, b.h, face, pressed);
-    u32 g = hot && kind == 2 ? th::white : th::ink;
-    int cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-    if (kind == 0) c.fill(cx - 4, cy + 2, 8, 2, g);
-    if (kind == 1) {
-        if (w->maximized) { c.rect(cx - 2, cy - 5, 7, 6, g); c.fill(cx - 5, cy - 2, 7, 6, face); c.rect(cx - 5, cy - 2, 7, 6, g); }
-        else { c.rect(cx - 4, cy - 4, 9, 8, g); c.hline(cx - 4, cy - 3, 9, g); }
+    u32 g = focused ? th::text : th::muted;
+    if (hot) {
+        if (kind == 2) { c.rrect(b.x, b.y, b.w, b.h, 6, pressed ? shade(th::red, 85) : th::red); g = th::white; }
+        else c.rrect(b.x, b.y, b.w, b.h, 6, pressed ? th::border : th::panel_dk);
     }
-    if (kind == 2)
-        for (int i = -3; i <= 3; i++) { c.fill(cx + i, cy + i, 2, 1, g); c.fill(cx + i, cy - i, 2, 1, g); }
+    float cx = b.x + b.w / 2.0f, cy = b.y + b.h / 2.0f;
+    if (kind == 0) c.aa_line(cx - 5, cy + 3.5f, cx + 5, cy + 3.5f, 1.4f, g);
+    if (kind == 1) {
+        if (w->maximized) {
+            c.rrect_stroke((int)cx - 3, (int)cy - 6, 9, 9, 2, g);
+            c.rrect((int)cx - 6, (int)cy - 3, 10, 10, 2, hot ? th::panel_dk : (focused ? th::white : 0xFFF1F2F5));
+            c.rrect_stroke((int)cx - 6, (int)cy - 3, 10, 10, 2, g);
+        } else c.rrect_stroke((int)cx - 5, (int)cy - 5, 10, 10, 2, g);
+    }
+    if (kind == 2) {
+        c.aa_line(cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f, 1.5f, g);
+        c.aa_line(cx - 4.5f, cy + 4.5f, cx + 4.5f, cy - 4.5f, 1.5f, g);
+    }
 }
 
 static void render_window(Window* w) {
@@ -406,23 +447,19 @@ static void render_window(Window* w) {
     c.init(w->surf.px, w->surf.w, w->surf.h, w->surf.w);
     bool focused = w == wm_focused() && !launcher_open && !overview_on;
     int W = w->r.w, H = w->r.h;
-    u32 frame = focused ? blend(accent(), th::ink, 60) : 0xFF8C84A4;
-    c.fill(0, 0, W, H, frame);
-    c.rect(0, 0, W, H, th::ink);
-    u32 top = focused ? accent() : 0xFFB4ACC8;
-    u32 bot = focused ? shade(accent(), 62) : 0xFF9E96B6;
-    for (int i = 0; i < TITLE_H - 1; i++) {
-        int band = i * 4 / (TITLE_H - 1);
-        c.hline(1, 1 + i, W - 2, mix(top, bot, band * 85));
+    u32 edge = focused ? shade(th::border, 88) : th::border;
+    u32 tbar = focused ? th::white : 0xFFF1F2F5;
+    c.fill(0, 0, W, H, edge);
+    c.fill(1, 1, W - 2, TITLE_H - 1, tbar);
+    c.hline(1, TITLE_H - 1, W - 2, th::border);
+    c.blit(icon(w->app->icon_name())->small, 12, 8);
+    int tx0 = 36, tx1 = btn_min(w).x - w->r.x - 8;
+    {
+        Rect oc = c.clip;
+        c.clip = Rect{tx0, 0, max(0, tx1 - tx0), TITLE_H}.intersect(oc);
+        c.text(tx0, 10, w->title, focused ? th::text : th::muted, 1, true);
+        c.clip = oc;
     }
-    if (focused) for (int yy = 6; yy < TITLE_H - 5; yy += 3) {
-        int tx0 = 34 + text_width(w->title, 1, true) + 10;
-        int tx1 = btn_min(w).x - w->r.x - 8;
-        if (tx1 > tx0) c.hline(tx0, yy, tx1 - tx0, blend(bot, th::ink, 50));
-    }
-    c.blit(icon(w->app->icon_name())->small, 8, 4);
-    if (focused) c.text(33, 8, w->title, shade(accent(), 40), 1, true);
-    c.text(32, 7, w->title, focused ? th::white : 0xFF4A4262, 1, true);
     draw_title_button(c, w, btn_min(w), 0, focused);
     if (w->resizable) draw_title_button(c, w, btn_max(w), 1, focused);
     draw_title_button(c, w, btn_close(w), 2, focused);
@@ -437,10 +474,20 @@ static void render_window(Window* w) {
     }
     c.origin(0, 0);
     c.reset_clip();
-    c.rect(cl.x - 1, cl.y - 1, cl.w + 2, cl.h + 2, th::ink);
-    if (w->resizable && !w->maximized)
-        for (int i = 0; i < 3; i++)
-            for (int j = 0; j <= i; j++) c.fill(W - 4 - j * 4, H - 12 + i * 4, 2, 2, th::border);
+    // round the four corners: the outside turns transparent, the rim keeps the edge colour
+    int R = w->maximized ? 0 : WIN_R;
+    for (int k = 0; k < R; k++)
+        for (int j = 0; j < R; j++) {
+            int o = rr_coverage(k, j, W, H, R), in = rr_coverage(k - 1, j - 1, W - 2, H - 2, R - 1);
+            int xs[2] = {k, W - 1 - k}, ys[2] = {j, H - 1 - j};
+            for (int a = 0; a < 2; a++)
+                for (int b = 0; b < 2; b++) {
+                    u32& px = w->surf.px[ys[b] * W + xs[a]];
+                    if (!o) { px = 0; continue; }
+                    u32 col = mix(edge, px & 0xFFFFFF, (u32)in);
+                    px = ((u32)o << 24) | (col & 0xFFFFFF);
+                }
+        }
     w->dirty = false;
 }
 
@@ -452,7 +499,7 @@ static Placement placement(Window* w) {
     if (w->anim != A_NONE) {
         int t = (int)min<u64>(256, (ticks() - w->anim_t0) * 256 / max<u32>(1, w->anim_dur));
         switch (w->anim) {
-        case A_OPEN: { int e = ease_out(t); p.r = lerp_rect(w->anim_from, w->anim_to, e); p.alpha = e; p.shadow = t > 200; break; }
+        case A_OPEN: { int e = ease_out(t); p.r = lerp_rect(w->anim_from, w->anim_to, e); p.alpha = e; p.shadow = t > 120; break; }
         case A_CLOSE: { int e = ease_in_out(t); p.r = lerp_rect(w->anim_from, w->anim_to, e); p.alpha = 256 - e; p.shadow = false; break; }
         case A_MIN: { int e = ease_in_out(t); p.r = lerp_rect(w->anim_from, w->anim_to, e); p.alpha = 255 - e * 180 / 256; p.shadow = false; break; }
         case A_RESTORE: { int e = ease_out(t); p.r = lerp_rect(w->anim_from, w->anim_to, e); p.alpha = 75 + e * 180 / 256; p.shadow = t > 220; break; }
@@ -489,7 +536,15 @@ static void draw_window(Canvas& c, Window* w) {
     Placement p = placement(w);
     if (!p.img->px || p.r.w <= 0 || p.r.h <= 0) return;
     if (c.clip.intersect(grow(p.r, 8)).empty()) return;
-    if (p.shadow) c.dither(p.r.x + 6, p.r.y + 6, p.r.w, p.r.h, 0xFF000000);
+    if (p.shadow && !w->maximized) {
+        bool foc = w == wm_focused();
+        int off = foc ? 5 : 3, a0 = (foc ? 84 : 54) * p.alpha / 255;
+        Rect oc = c.clip;
+        c.clip = oc.intersect({p.r.x, p.r.y + p.r.h - 10, p.r.w, 10 + off});     // the strip the window doesn't cover
+        c.rrect(p.r.x, p.r.y + off, p.r.w, p.r.h, WIN_R, 0xFF000000, a0);
+        c.clip = oc;
+        c.shadow(p.r.x, p.r.y + off, p.r.w, p.r.h, WIN_R, foc ? 14 : 9, a0);
+    }
     c.blit_stretch_alpha(*p.img, p.r.x, p.r.y, p.r.w, p.r.h, p.alpha);
 }
 
@@ -509,9 +564,8 @@ static void draw_snap_preview(Canvas& c) {
     Rect from{ui_mouse_x - 20, ui_mouse_y - 20, 40, 40};
     Rect r = lerp_rect(from, grow(target, -6), t);
     if (t < 256) damage(rect_union(grow(target, 2), grow(from, 2)));
-    c.fill_alpha(r.x, r.y, r.w, r.h, accent(), 60);
-    c.rect(r.x, r.y, r.w, r.h, accent());
-    c.rect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, blend(accent(), th::white, 120));
+    c.rrect(r.x, r.y, r.w, r.h, WIN_R, accent(), 50);
+    c.rrect_stroke(r.x, r.y, r.w, r.h, WIN_R, accent(), 200);
 }
 
 // ================================================================ overview (expose)
@@ -654,10 +708,13 @@ static void compose_rect(Rect R) {
     }
     // wallpaper, with a chunky pixel dissolve when it changes
     Wallpaper* wp = wallpaper_get(settings.wallpaper);
-    int dlevel = wall_prev >= 0 ? (int)((ticks() - wall_t0) * 17 / 500) : 17;
+    int dlevel = wall_prev >= 0 ? (int)min<u64>(256, (ticks() - wall_t0) * 256 / 400) : 256;
     const Image& wcur = wall_fit(wp);
-    if (dlevel < 17 && wall_prev >= 0) c.dissolve(wall_fit(wallpaper_get(wall_prev)), wall_fit(wp), dlevel);
-    else c.blit_raw(wcur.px, SW, SH, SW, 0, 0);
+    if (dlevel < 256 && wall_prev >= 0) {
+        const Image& wold = wall_fit(wallpaper_get(wall_prev));
+        c.blit_raw(wold.px, SW, SH, SW, 0, 0);
+        c.blit_stretch_alpha(wcur, 0, 0, SW, SH, (u32)dlevel);
+    } else c.blit_raw(wcur.px, SW, SH, SW, 0, 0);
     if (overview_on) {
         int t = (int)min<u64>(256, (ticks() - overview_t0) * 256 / 260);
         int e = overview_leaving ? 256 - ease_out(t) : ease_out(t);
@@ -742,7 +799,7 @@ static void set_cursor(CursorShape s) {
 static void update_cursor() {
     CursorShape s = CUR_ARROW;
     if (drag == DRAG_MOVE) s = CUR_MOVE;
-    else if (drag == DRAG_RESIZE) s = CUR_RESIZE;
+    else if (drag == DRAG_RESIZE) s = zone_cursor(drag_zone);
     else if (launcher_open || popup.open) s = CUR_ARROW;
     else if (overview_on) s = overview_hit(ui_mouse_x, ui_mouse_y) ? CUR_HAND : CUR_ARROW;
     else if (dock_hover >= 0) s = CUR_HAND;
@@ -750,7 +807,7 @@ static void update_cursor() {
         Window* w = window_at(ui_mouse_x, ui_mouse_y);
         if (w) {
             Rect cl = w->client();
-            if (w->resizable && !w->maximized && grip(w).contains(ui_mouse_x, ui_mouse_y)) s = CUR_RESIZE;
+            if (int z = resize_zone(w, ui_mouse_x, ui_mouse_y)) s = zone_cursor(z);
             else if (cl.contains(ui_mouse_x, ui_mouse_y) && !w->app->dialog) {
                 AppCtx ctx(w);
                 s = (CursorShape)w->app->cursor_at(ui_mouse_x - cl.x, ui_mouse_y - cl.y);
@@ -803,7 +860,7 @@ static void on_button(int button, bool down) {
         Rect r = launcher_rect();
         if (!r.contains(mx, my)) { launcher_hide(); return; }
         for (int i = 0; i < lcount; i++)
-            if (Rect{r.x + 16, r.y + 60 + i * 34, r.w - 32, 32}.contains(mx, my)) { launcher_activate(i); return; }
+            if (Rect{r.x + 20, r.y + 82 + i * 40, 544, 38}.contains(mx, my)) { launcher_activate(i); return; }
         return;
     }
 
@@ -869,6 +926,15 @@ static void on_button(int button, bool down) {
     if (w) {
         if (w != wm_focused()) wm_focus(w);
         Rect cl = w->client();
+        if (int z = resize_zone(w, mx, my)) {
+            drag = DRAG_RESIZE;
+            drag_win = w;
+            drag_zone = z;
+            drag_dx = mx; drag_dy = my;
+            drag_x0 = w->r.x; drag_y0 = w->r.y;
+            drag_w0 = w->r.w; drag_h0 = w->r.h;
+            return;
+        }
         if (my < w->r.y + TITLE_H) {
             title_press = w;
             w->dirty = true;
@@ -891,13 +957,6 @@ static void on_button(int button, bool down) {
             drag_win = w;
             drag_dx = mx - w->r.x;
             drag_dy = my - w->r.y;
-            return;
-        }
-        if (w->resizable && !w->maximized && grip(w).contains(mx, my)) {
-            drag = DRAG_RESIZE;
-            drag_win = w;
-            drag_dx = mx; drag_dy = my;
-            drag_w0 = w->r.w; drag_h0 = w->r.h;
             return;
         }
         if (cl.contains(mx, my)) {
@@ -928,7 +987,7 @@ static void on_button(int button, bool down) {
 static void on_mouse_move(int ox, int oy) {
     int mx = ui_mouse_x, my = ui_mouse_y;
     // cursor trail: repaint where it was and where it is
-    damage({ox - 8, oy - 8, 26, 28});
+    damage({ox - 14, oy - 14, 42, 42});
     damage(cursor_rect());
     if (popup.open) {
         int h = menu_hit(mx, my);
@@ -940,7 +999,7 @@ static void on_mouse_move(int ox, int oy) {
     if (launcher_open) {
         Rect r = launcher_rect();
         for (int i = 0; i < lcount; i++)
-            if (Rect{r.x + 16, r.y + 60 + i * 34, r.w - 32, 32}.contains(mx, my) && launcher_sel != i) { launcher_sel = i; damage(r); }
+            if (Rect{r.x + 20, r.y + 82 + i * 40, 544, 38}.contains(mx, my) && launcher_sel != i) { launcher_sel = i; damage(r); }
     }
     if (oy < TOPBAR_H + 2 || my < TOPBAR_H + 2) damage({0, 0, SW, TOPBAR_H});
     if (overview_on) { damage_all(); update_cursor(); return; }
@@ -961,8 +1020,15 @@ static void on_mouse_move(int ox, int oy) {
     }
     case DRAG_RESIZE: {
         damage_window(drag_win);
-        drag_win->r.w = clamp(drag_w0 + mx - drag_dx, drag_win->min_w, SW - drag_win->r.x);
-        drag_win->r.h = clamp(drag_h0 + my - drag_dy, drag_win->min_h, SH - drag_win->r.y);
+        {
+            int dx = mx - drag_dx, dy = my - drag_dy;
+            Rect n{drag_x0, drag_y0, drag_w0, drag_h0};
+            if (drag_zone & Z_R) n.w = clamp(drag_w0 + dx, drag_win->min_w, SW - drag_x0);
+            if (drag_zone & Z_B) n.h = clamp(drag_h0 + dy, drag_win->min_h, SH - drag_y0);
+            if (drag_zone & Z_L) { int nw = clamp(drag_w0 - dx, drag_win->min_w, drag_x0 + drag_w0); n.x = drag_x0 + drag_w0 - nw; n.w = nw; }
+            if (drag_zone & Z_T) { int nh = clamp(drag_h0 - dy, drag_win->min_h, drag_y0 + drag_h0 - TOPBAR_H); n.y = drag_y0 + drag_h0 - nh; n.h = nh; }
+            drag_win->r = n;
+        }
         drag_win->maximized = false;
         drag_win->dirty = true;
         {
@@ -1147,6 +1213,11 @@ void ui_run() {
                 if (w && !w->app->dialog) send_mouse(w, M_WHEEL, 0, ms.wheel);
             }
         }
+        proc_slice(3);
+        audio_poll();
+        usb_poll();
+        drives_poll();
+        drives_tick();
         extern void net_poll();
         net_poll();
         display_poll();
@@ -1164,7 +1235,7 @@ void ui_run() {
             damage_all();
             if (overview_leaving && ticks() - overview_t0 > 260) { overview_on = false; ui_invalidate_all(); }
         }
-        if (wall_prev >= 0) { if (ticks() - wall_t0 > 520) wall_prev = -1; damage_all(); }
+        if (wall_prev >= 0) { if (ticks() - wall_t0 > 420) wall_prev = -1; damage_all(); }
         if (!last_input) last_input = ticks();
         if (!saver_on && settings.saver_min && ticks() - last_input > (u64)settings.saver_min * 60000) saver_start();
         if (settings.sleep_min && ticks() - last_input > (u64)settings.sleep_min * 60000) ui_lock(true);
@@ -1205,7 +1276,7 @@ void ui_run() {
         if (dmg_n) {
             u64 due = last_frame_us + interval_us, n2 = ticks_us();
             cpu_spin_us(n2 < due ? (u32)min<u64>(due - n2, 400) : 50);
-        } else if (ticks() - last_frame < 120 || net_busy()) cpu_rest();
+        } else if (ticks() - last_frame < 120 || net_busy() || proc_busy()) cpu_rest();
         else cpu_idle();
     }
     fs_sync();

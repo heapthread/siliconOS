@@ -3,6 +3,7 @@
 #include "../settings.h"
 #include "../arch/arch.h"
 #include "../drv/drivers.h"
+#include "../ui/lockscreen.h"
 
 // ---------------------------------------------------------------- commands
 struct ShellCommands {
@@ -11,6 +12,7 @@ static FsNode* need(Shell& sh, const char* path, bool want_dir = false, bool wan
     if (!n) { sh.outf(C_BRED "%s: no such file or directory\n" C_RESET, path); return nullptr; }
     if (want_dir && !n->dir) { sh.outf(C_BRED "%s: not a directory\n" C_RESET, path); return nullptr; }
     if (want_file && n->dir) { sh.outf(C_BRED "%s: is a directory\n" C_RESET, path); return nullptr; }
+    if (!fs_allowed(n, 4)) { sh.outf(C_BRED "%s: permission denied\n" C_RESET, path); return nullptr; }
     return n;
 }
 
@@ -88,7 +90,9 @@ static void ls_dir(Shell& sh, FsNode* d, bool lng) {
             stamp_to_datetime(n->mtime, dt);
             if (n->dir) snprintf(sz, sizeof(sz), "%d items", n->children.len);
             else fmt_size(n->size, sz, sizeof(sz));
-            sh.outf(C_GRAY "%s  %10s  %s %02d %02d:%02d  " C_RESET "%s%s%s\n" C_RESET, n->dir ? "dir " : "file", sz,
+            char mode[11];
+            fs_mode_string(n, mode);
+            sh.outf(C_GRAY "%s %-5s %10s  %s %02d %02d:%02d  " C_RESET "%s%s%s\n" C_RESET, mode, n->uid == FS_UID_ROOT ? "root" : "user", sz,
                     month_name(dt.month), dt.day, dt.hour, dt.minute, n->dir ? C_BBLUE C_BOLD : "", n->name,
                     n->dir ? "/" : "");
         }
@@ -189,6 +193,7 @@ static void rm(Shell& sh, int argc, char** argv) {
         if (!f) continue;
         if (f == fs_root() || f == fs_home() || f == fs_trash_dir()) { sh.outf(C_BRED "refusing to remove %s\n" C_RESET, argv[i]); continue; }
         if (f->dir && !rec && f->children.len) { sh.outf(C_BRED "%s is a non-empty directory (use rm -r)\n" C_RESET, argv[i]); continue; }
+        if (!fs_can_modify(f)) { sh.outf(C_BRED "cannot remove %s: permission denied\n" C_RESET, argv[i]); continue; }
         if (fs_is_ancestor(f, sh.cwd)) sh.cwd = f->parent;
         fs_remove(f);
     }
@@ -644,6 +649,41 @@ static void kbd(Shell& sh, int argc, char** argv) {
     sh.outf(C_BRED "unknown layout %s\n" C_RESET, argv[1]);
 }
 
+static void chmod(Shell& sh, int argc, char** argv) {
+    if (argc < 3) { sh.out("usage: chmod <octal mode> <path>...     (for example chmod 644 notes.txt)\n"); return; }
+    u16 mode = 0;
+    for (const char* p = argv[1]; *p; p++) { if (*p < '0' || *p > '7') { sh.err("chmod: the mode must be octal digits\n"); return; } mode = (u16)(mode * 8 + (*p - '0')); }
+    for (int i = 2; i < argc; i++) {
+        FsNode* n = need(sh, argv[i]);
+        if (n && !fs_chmod(n, mode)) sh.err("chmod: %s: only the owner or root can do that\n", argv[i]);
+    }
+}
+
+static void chown(Shell& sh, int argc, char** argv) {
+    if (argc < 3) { sh.out("usage: chown [-R] <root|user> <path>...      (needs sudo)\n"); return; }
+    int first = 1;
+    bool rec = false;
+    if (!strcmp(argv[1], "-R")) { rec = true; first = 2; }
+    if (argc < first + 2) { sh.out("usage: chown [-R] <root|user> <path>...\n"); return; }
+    u16 uid = !strcmp(argv[first], "root") ? FS_UID_ROOT : FS_UID_USER;
+    for (int i = first + 1; i < argc; i++) {
+        FsNode* n = need(sh, argv[i]);
+        if (n && !fs_chown(n, uid, rec)) sh.err("chown: %s: you need to be root (try sudo)\n", argv[i]);
+    }
+}
+
+static void sudo(Shell& sh, int argc, char** argv) {
+    if (argc < 2) { sh.out("usage: sudo <command>      run a command as root\n"); return; }
+    char cmd[256] = "";
+    for (int i = 1; i < argc; i++) { if (i > 1) strlcat(cmd, " ", sizeof(cmd)); strlcat(cmd, argv[i], sizeof(cmd)); }
+    if (!password_is_set()) { FsRoot as_root; sh.run_line(cmd); return; }
+    sh.start_program(make_password_prompt(&sh, cmd));
+}
+
+static void id(Shell& sh, int, char**) {
+    sh.outf("uid=%d(%s) %s\n", fs_uid, fs_uid == FS_UID_ROOT ? "root" : settings.user, fs_uid == FS_UID_ROOT ? "" : "(use sudo for root)");
+}
+
 static void zoom(Shell& sh, int, char**) {
     if (sh.host->host_is_ui()) { sh.out("zoom works in the full-screen terminal\n"); return; }
     sh.host->shell_request(&sh, SR_ZOOM, nullptr);
@@ -920,6 +960,15 @@ void cmd_dhcp(Shell&, int, char**);
 void cmd_lspci(Shell&, int, char**);
 void cmd_netstat(Shell&, int, char**);
 void cmd_ping(Shell&, int, char**);
+void cmd_ps(Shell&, int, char**);
+void cmd_vpn(Shell&, int, char**);
+void cmd_lsblk(Shell&, int, char**);
+void cmd_mount(Shell&, int, char**);
+void cmd_eject(Shell&, int, char**);
+void cmd_blkdump(Shell&, int, char**);
+void cmd_ping6(Shell&, int, char**);
+void cmd_kill(Shell&, int, char**);
+void cmd_run(Shell&, int, char**);
 void cmd_nslookup(Shell&, int, char**);
 void cmd_curl(Shell&, int, char**);
 void cmd_wget(Shell&, int, char**);
@@ -971,6 +1020,10 @@ const Command commands[] = {
     {"hostname", "[name]", "show or set host name", ShellCommands::hostname},
     {"theme", "[name]", "terminal color theme", ShellCommands::theme},
     {"kbd", "[layout]", "keyboard layout (us uk de fr es dvorak)", ShellCommands::kbd},
+    {"chmod", "<mode> <path>", "change permissions (octal)", ShellCommands::chmod},
+    {"chown", "[-R] <user> <path>", "change the owner (needs sudo)", ShellCommands::chown},
+    {"sudo", "<command>", "run a command as root", ShellCommands::sudo},
+    {"id", "", "who am I", ShellCommands::id},
     {"zoom", "", "toggle big terminal font", ShellCommands::zoom},
     {"colors", "", "show the palette", ShellCommands::colors},
     {"wallpaper", "[name]", "list or set the wallpaper", ShellCommands::wallpaper},
@@ -982,6 +1035,16 @@ const Command commands[] = {
     {"life", "", "game of life", ShellCommands::life},
     {"ifconfig", "", "network address and stats", cmd_ifconfig},
     {"ping", "[-c n] <host>", "check a host answers", cmd_ping},
+    {"ping6", "[-c n] <host>", "ping over IPv6", cmd_ping6},
+    {"lsblk", "", "list USB drives", cmd_lsblk},
+    {"mount", "", "list mounted drives", cmd_mount},
+    {"eject", "<drive>", "write back and release a drive", cmd_eject},
+    {"umount", "<drive>", "same as eject", cmd_eject},
+    {"blkdump", "<drive> [sector]", "hex dump a drive sector", cmd_blkdump},
+    {"vpn", "[status|setup|on|off|genkey]", "WireGuard VPN", cmd_vpn},
+    {"ps", "", "list running programs", cmd_ps},
+    {"kill", "<pid>", "end a program", cmd_kill},
+    {"run", "<program.uapp>", "start a user program (ring 3)", cmd_run},
     {"nslookup", "<host>", "look up an address (DNS)", cmd_nslookup},
     {"curl", "[-I] [-o f] <url>", "fetch a web page", cmd_curl},
     {"wget", "[-O f] <url>", "download a file", cmd_wget},

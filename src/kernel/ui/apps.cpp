@@ -1,5 +1,6 @@
 // silicon - app registry and launching
 #include "apps/apps.h"
+#include "../media/media.h"
 
 const AppInfo app_infos[] = {
     {"terminal", "Terminal", "the silicon shell", false, true},
@@ -9,6 +10,7 @@ const AppInfo app_infos[] = {
     {"docs", "Docs", "word, spreadsheet and csv reader", false, false},
     {"write", "Write", "unicode text with scalable fonts", false, false},
     {"mail", "Mail", "pop3 and smtp email", true, false},
+    {"media", "Media", "audio and video player", false, true},
     {"files", "Files", "browse SiliconFS", false, true},
     {"browser", "Beam", "web browser", false, true},
     {"slate", "Slate", "text editor", false, true},
@@ -53,6 +55,7 @@ const AppInfo app_infos[] = {
     {"breakout", "Breakout", "break the die", true, false},
     {"flappy", "Flappy Chip", "flap through traces", true, false},
     {"trash", "Trash", "deleted files", true, false},
+    {"module", "Program", "a program from the SDK", false, false},
     {"power", "Power", "restart or shut down", true, false},
 };
 const int app_info_count = ARRAY_LEN(app_infos);
@@ -70,7 +73,7 @@ static App* create(const char* id, const char* arg) {
         {"minesweeper", new_minesweeper}, {"snake", new_snake}, {"reversi", new_reversi},
         {"trash", new_trash}, {"power", new_power}, {"browser", new_browser},
         {"stacker", new_stacker}, {"g2048", new_g2048}, {"breakout", new_breakout}, {"flappy", new_flappy},
-        {"photos", new_photos}, {"piano", new_piano}, {"emoji", new_emoji}, {"pdfview", new_pdfview}, {"apps", new_apps}, {"notifications", new_notifications}, {"firewall", new_firewall}, {"docs", new_docs}, {"write", new_write}, {"mail", new_mail},
+        {"photos", new_photos}, {"piano", new_piano}, {"emoji", new_emoji}, {"pdfview", new_pdfview}, {"apps", new_apps}, {"notifications", new_notifications}, {"firewall", new_firewall}, {"docs", new_docs}, {"write", new_write}, {"mail", new_mail}, {"media", new_media},
         {"pong", new_pong}, {"invaders", new_invaders}, {"asteroids", new_asteroids}, {"runner", new_runner}, {"connect4", new_connect4}, {"memory", new_memory}, {"wordy", new_wordy}, {"sudoku", new_sudoku}, {"solitaire", new_solitaire}, {"chess", new_chess}, {"calendar", new_calendar}, {"tasks", new_tasks}, {"hex", new_hex}, {"storage", new_storage}, {"convert", new_convert}, {"palette", new_palette}, {"capture", new_capture}, {"weather", new_weather}, {"typing", new_typing}, {"network", new_network}, {"archive", new_archive},
     };
     for (auto& t : table) if (!strcmp(t.id, id)) return t.fn(arg);
@@ -95,6 +98,24 @@ App* launch(const char* id, const char* arg) {
     return a;
 }
 
+bool is_pdf_name(const char* name);
+bool is_image_name(const char* name);
+bool is_office_name(const char* name);
+const char* file_icon_name(const char* name, bool dir, bool has_children) {
+    if (dir) return has_children ? "folder_full" : "folder";
+    if (str_icontains(name, ".pix") || is_image_name(name)) return "image_file";
+    if (str_icontains(name, ".htm")) return "browser";
+    if (str_icontains(name, ".sapp") || str_icontains(name, ".uapp")) return "module";
+    if (str_icontains(name, ".zip")) return "archive";
+    if (is_pdf_name(name)) return "pdf";
+    if (is_office_name(name)) return "docs";
+    if (str_icontains(name, ".mp3") || str_icontains(name, ".wav") || str_icontains(name, ".avi") || str_icontains(name, ".ogg")) return "media";
+    if (str_icontains(name, ".ics")) return "calendar";
+    if (str_icontains(name, ".txt") || str_icontains(name, ".md") || str_icontains(name, ".log")) return "text_file";
+    return "file";
+}
+
+void uapp_run(const char* path);
 void open_path(const char* path) {
     FsNode* n = fs_lookup(path);
     if (!n) { ui_notify("Not found", path, "file"); return; }
@@ -110,6 +131,8 @@ void open_path(const char* path) {
     }
     if (str_icontains(n->name, ".zip")) { launch("__new__", "archive"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (is_office_name(n->name)) { launch("__new__", "docs"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
+    if (media_is_media_name(n->name)) { launch("__new__", "media"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
+    if (str_icontains(n->name, ".uapp")) { uapp_run(path); return; }
     if (str_icontains(n->name, ".sapp")) { App* a = new_module(path); Window* w = wm_open(a, a->pref_w(), a->pref_h()); w->resizable = a->resizable(); return; }
     if (is_pdf_name(n->name)) { launch("__new__", "pdfview"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (is_image_name(n->name)) { launch("__new__", "photos"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }

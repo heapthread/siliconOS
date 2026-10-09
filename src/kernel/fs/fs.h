@@ -15,6 +15,26 @@ struct FsNode {
     u32     size, cap;
     u32     ctime, mtime;
     char    origin[FS_ORIGIN_MAX];       // where a trashed node came from
+    u16     mode;                        // permission bits, rwxrwxrwx (the middle triple is treated like "others")
+    u16     uid;                         // owner: 0 = root, 1000 = the signed-in user
+    u8      mount;                       // nonzero: the root of a mounted drive (its id)
+    u8      fat_vol, fat_state;          // inside a FAT drive: which one, and whether it is in sync (fs/fat.cpp)
+    u32     fat_first, fat_dir;          // first cluster of the file/folder, cluster of the folder holding it
+};
+
+// ---- permissions. The kernel starts as root; the session switches to the user (uid 1000), after which
+// /system and other root-owned files can't be changed by the shell, the apps or the programs they run.
+static const u16 FS_UID_ROOT = 0, FS_UID_USER = 1000;
+extern u16 fs_uid;                       // who is acting
+bool    fs_allowed(FsNode* n, int want); // want: 4 read, 2 write, 1 enter / execute
+bool    fs_can_modify(FsNode* n);        // may n be deleted, renamed or overwritten by the current user
+void    fs_mode_string(FsNode* n, char out[11]);   // "drwxr-xr-x"
+bool    fs_chmod(FsNode* n, u16 mode);
+bool    fs_chown(FsNode* n, u16 uid, bool recursive);
+struct FsRoot {                          // act as root for a scope (kernel internals writing /system)
+    u16 saved;
+    FsRoot() : saved(fs_uid) { fs_uid = FS_UID_ROOT; }
+    ~FsRoot() { fs_uid = saved; }
 };
 
 void    fs_init();
@@ -53,5 +73,7 @@ u32  fs_generation();                    // bumps on every change (for live view
 void fs_tick();                          // sync if dirty for a little while
 bool fs_sync();
 u32  fs_disk_used();
-u32  fs_disk_capacity();
+u32  fs_disk_capacity();                 // the largest image one commit can hold
+u32  fs_commit_generation();            // number of the newest commit
+int  fs_active_slot();                   // 0 or 1: where the newest commit lives
 void fs_format();

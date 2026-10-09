@@ -95,6 +95,18 @@ def step_generated():
     art = os.path.join(ROOT, "tools", "make_art.py")
     if os.path.exists(art):
         run([sys.executable, art])
+    modern = os.path.join(ROOT, "tools", "make_modern.py")
+    stamp = os.path.join(ROOT, "art", "modern", ".stamp")
+    if os.path.exists(modern) and newer(stamp, [modern]):
+        print("[gen] modern art")
+        run([sys.executable, modern])
+        open(stamp, "w").write("ok")
+    modern = os.path.join(ROOT, "tools", "make_modern.py")
+    stamp = os.path.join(ROOT, "art", "modern", ".stamp")
+    if os.path.exists(modern) and newer(stamp, [modern]):
+        print("[gen] modern art")
+        run([sys.executable, modern])
+        open(stamp, "w").write("ok")
     # sample app modules built with the SDK are embedded in the kernel
     sdk = os.path.join(ROOT, "sdk", "build_app.py")
     ex_dir = os.path.join(ROOT, "sdk", "examples")
@@ -106,6 +118,17 @@ def step_generated():
             if srcs and newer(out, sdk_deps):
                 print(f"[sapp] {name}")
                 run([sys.executable, sdk, "-o", out] + srcs)
+    # sample user programs (ring 3) built with the user SDK
+    ubuild = os.path.join(ROOT, "sdk", "build_uapp.py")
+    uex = os.path.join(ROOT, "sdk", "user_examples")
+    if os.path.exists(ubuild) and os.path.isdir(uex):
+        udeps = walk(os.path.join(ROOT, "sdk", "user"), {".py", ".h", ".cpp", ".in"}) + [ubuild]
+        for name in sorted(os.listdir(uex)):
+            srcs = sorted(walk(os.path.join(uex, name), {".cpp", ".c"}))
+            out = os.path.join(GEN, "uapp", name + ".uapp")
+            if srcs and newer(out, udeps + srcs):
+                print(f"[uapp] {name}")
+                run([sys.executable, ubuild, "-o", out] + srcs)
     assets = os.path.join(ROOT, "tools", "assets.py")
     if os.path.exists(assets):
         run([sys.executable, assets, GEN])
@@ -258,6 +281,12 @@ def start_size(hw, hh):
 BRIDGE_PORT = int(os.environ.get("SILICON_BRIDGE_PORT", "4446"))
 
 
+def audio_arg(audio):
+    # SILICON_AUDIO_WAV=file.wav records everything the VM plays (handy for tests)
+    wav = os.environ.get("SILICON_AUDIO_WAV")
+    return f"wav,path={wav}" if wav else audio
+
+
 def qemu_cmd(headless=False):
     audio = "none" if headless else audio_driver()
     # hardware virtualization when available (WHPX on Windows, KVM/HVF elsewhere), else TCG
@@ -273,14 +302,19 @@ def qemu_cmd(headless=False):
     for a in accel.split(":"):
         cmd += ["-accel", a]
     cmd += [
+           "-device", "piix3-usb-uhci,id=uhci",
            "-drive", f"file={IMG},format=raw,if=ide,index=0",
            "-vga", "none", "-device", vga_device(headless), "-rtc", "base=localtime",
            "-netdev", "user,id=net0", "-device", "rtl8139,netdev=net0",
            "-serial", "file:" + os.path.join(BUILD, "serial.log"),
            "-chardev", f"socket,id=bridge,host=127.0.0.1,port={BRIDGE_PORT},server=on,wait=off",
            "-serial", "chardev:bridge",
-           "-audiodev", f"{audio},id=snd0",
+           "-audiodev", audio_arg(audio) + ",id=snd0", "-device", "AC97,audiodev=snd0",
            "-machine", "pc,pcspk-audiodev=snd0"]
+    # SILICON_USB_IMG=file.img plugs that disk image in as a USB drive at start (more can be hot-plugged from the monitor)
+    usb_img = os.environ.get("SILICON_USB_IMG")
+    if usb_img:
+        cmd += ["-drive", f"if=none,id=usbd0,format=raw,file={usb_img}", "-device", "usb-storage,bus=uhci.0,drive=usbd0,id=usbdev0"]
     if not headless:
         disp = os.environ.get("SILICON_DISPLAY", "sdl,gl=off" if os.name == "nt" and "whpx" in accel else "")
         if disp:

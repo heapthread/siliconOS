@@ -2,22 +2,36 @@
 #include "arch.h"
 
 // ---------------------------------------------------------------- GDT
-static u64 gdt[5] = {
+static u64 gdt[7] = {
     0,
     0x00AF9A000000FFFFull,   // 0x08 kernel code 64
     0x00CF92000000FFFFull,   // 0x10 kernel data
-    0,
-    0,
+    0x00CFF2000000FFFFull,   // 0x18 user data   (selector 0x1B)
+    0x00AFFA000000FFFFull,   // 0x20 user code 64 (selector 0x23)
+    0, 0,                    // 0x28 task state segment (16 bytes)
 };
 struct __attribute__((packed)) DescPtr { u16 limit; u64 base; };
+struct __attribute__((packed)) Tss {
+    u32 r0; u64 rsp0, rsp1, rsp2; u64 r1; u64 ist[7]; u64 r2; u16 r3, iomap;
+};
+static Tss tss;
 extern "C" void gdt_load(void* desc, u16 code, u16 data);
+extern "C" void tss_load(u16 sel);
 
 void gdt_init() {
     static DescPtr d;
+    u64 base = (u64)&tss, lim = sizeof(Tss) - 1;
+    gdt[5] = (lim & 0xFFFF) | ((base & 0xFFFFFF) << 16) | (0x89ull << 40) | (((lim >> 16) & 0xF) << 48) | (((base >> 24) & 0xFF) << 56);
+    gdt[6] = base >> 32;
+    tss.iomap = sizeof(Tss);
     d.limit = sizeof(gdt) - 1;
     d.base = (u64)gdt;
     gdt_load(&d, 0x08, 0x10);
+    tss_load(0x28);
 }
+
+// where the cpu lands when a user thread is interrupted
+void tss_set_rsp0(u64 rsp0) { tss.rsp0 = rsp0; }
 
 // ---------------------------------------------------------------- IDT
 struct __attribute__((packed)) IdtEntry {
@@ -28,6 +42,7 @@ struct __attribute__((packed)) IdtEntry {
 };
 static IdtEntry idt[256];
 extern "C" u64 isr_table[48];
+extern "C" u64 isr_sys_table[2];
 static IrqHandler irq_handlers[16];
 
 static void pic_remap() {
@@ -62,6 +77,13 @@ void idt_init() {
         idt[i].off_hi = a >> 32;
         idt[i].zero = 0;
     }
+    for (int k = 0; k < 2; k++) {                       // 0x80 system call (callable from ring 3), 0x81 yield (kernel only)
+        u64 a = isr_sys_table[k];
+        IdtEntry& e = idt[0x80 + k];
+        e.off_lo = a & 0xFFFF; e.sel = 0x08; e.ist = 0;
+        e.flags = k == 0 ? 0xEE : 0x8E;
+        e.off_mid = (a >> 16) & 0xFFFF; e.off_hi = a >> 32; e.zero = 0;
+    }
     static DescPtr d;
     d.limit = sizeof(idt) - 1;
     d.base = (u64)idt;
@@ -79,15 +101,26 @@ static const char* exc_names[32] = {
 };
 
 void panic_frame(const char* what, IntFrame* f);
+IntFrame* sched_tick(IntFrame* f);
+IntFrame* sched_yield_main(IntFrame* f);
+IntFrame* sys_dispatch(IntFrame* f);
+IntFrame* proc_fault(IntFrame* f, const char* what);
 
-extern "C" void isr_dispatch(IntFrame* f) {
+// returns the frame to resume: the one it was given, or another thread's when the scheduler switches
+extern "C" IntFrame* isr_dispatch(IntFrame* f) {
     if (f->int_no < 32) {
+        if ((f->cs & 3) == 3) return proc_fault(f, exc_names[f->int_no]);      // a user program misbehaved
         panic_frame(exc_names[f->int_no], f);
     }
+    if (f->int_no == 0x80) return sys_dispatch(f);
+    if (f->int_no == 0x81) return sched_yield_main(f);
     int irq = (int)f->int_no - 32;
+    if (irq < 0 || irq > 15) return f;
     if (irq_handlers[irq]) irq_handlers[irq](f);
     if (irq >= 8) outb(0xA0, 0x20);
     outb(0x20, 0x20);
+    if (irq == 0) return sched_tick(f);
+    return f;
 }
 
 // ---------------------------------------------------------------- PIT + TSC clock

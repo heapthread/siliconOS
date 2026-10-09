@@ -3,6 +3,8 @@
 #include "../net/net.h"
 #include "../drv/pci.h"
 
+void print_inet6(Shell& sh);
+
 // ================================================================ ifconfig
 void cmd_ifconfig(Shell& sh, int, char**) {
     if (!netcfg.up) { sh.err("no network card found (start QEMU with -device rtl8139)\n"); return; }
@@ -15,6 +17,7 @@ void cmd_ifconfig(Shell& sh, int, char**) {
     else sh.out(C_BYEL "      waiting for an address (dhcp)...\n" C_RESET);
     sh.outf("      ether %x:%x:%x:%x:%x:%x\n", netcfg.mac[0], netcfg.mac[1], netcfg.mac[2], netcfg.mac[3], netcfg.mac[4], netcfg.mac[5]);
     sh.outf("      gateway %s  dns %s\n", gw, dns);
+    print_inet6(sh);
     sh.outf("      RX packets %u  bytes %u\n      TX packets %u  bytes %u\n", (u32)rxp, (u32)rxb, (u32)txp, (u32)txb);
 }
 
@@ -248,4 +251,67 @@ void cmd_wget(Shell& sh, int argc, char** argv) {
     sh.outf("--> %s\n", url);
     sh.prog_keep_screen = true;
     sh.start_program(new Fetcher(sh, url, out, false, true));
+}
+
+// ================================================================ IPv6
+void print_inet6(Shell& sh) {
+    if (!ip6cfg.ready) return;
+    char a[48];
+    ip6_to_str(ip6cfg.ll, a, sizeof(a));
+    sh.outf("      inet6 " C_BGREEN "%s" C_RESET "  prefixlen 64  scope link\n", a);
+    if (ip6cfg.has_global) {
+        ip6_to_str(ip6cfg.global, a, sizeof(a));
+        sh.outf("      inet6 " C_BGREEN "%s" C_RESET "  prefixlen 64  scope global (slaac)\n", a);
+        ip6_to_str(ip6cfg.router, a, sizeof(a));
+        sh.outf("      router %s", a);
+        if (ip6cfg.has_dns) { ip6_to_str(ip6cfg.dns, a, sizeof(a)); sh.outf("  dns %s", a); }
+        sh.out("\n");
+    } else sh.out(C_BYEL "      no IPv6 router heard yet\n" C_RESET);
+}
+
+struct Pinger6 : ConsoleProgram {
+    Shell& sh;
+    char host[128];
+    u8 ip[16];
+    bool resolved = false, finished = false;
+    int count, sent = 0, got = 0;
+    u64 t_last = 0, t0;
+    u16 id;
+    Pinger6(Shell& s, const char* h, int c) : sh(s), count(c) { strlcpy(host, h, sizeof(host)); id = (u16)rand(); t0 = ticks(); }
+    static void reply(void* ctx, u16 seq, u32 rtt, const u8* from, u8 hops) {
+        Pinger6* p = (Pinger6*)ctx;
+        if (rtt == 0xFFFFFFFF) { p->sh.outf(C_BYEL "request %u timed out\n" C_RESET, seq); return; }
+        char a[48];
+        ip6_to_str(from, a, sizeof(a));
+        p->got++;
+        p->sh.outf("16 bytes from %s: icmp_seq=%u hlim=%u time=%u ms\n", a, seq, hops, rtt);
+    }
+    void on_key(const KeyEvent& e) override { if (e.ctrl && e.key == 'c') finished = true; }
+    void tick() override {
+        if (finished) return;
+        if (!resolved) {
+            int st = str_to_ip6(host, ip) ? 1 : dns6_resolve(host, ip);
+            if (st < 0 || (st == 0 && ticks() - t0 > 8000)) { sh.err("ping6: can't resolve %s\n", host); finished = true; return; }
+            if (st == 0) return;
+            resolved = true;
+            char a[48];
+            ip6_to_str(ip, a, sizeof(a));
+            sh.outf("PING6 %s (%s)\n", host, a);
+        }
+        if (sent < count && ticks() - t_last >= 1000) { sent++; t_last = ticks(); ip6_ping(ip, id, (u16)sent, reply, this); }
+        if (sent >= count && ticks() - t_last > 5200) {
+            sh.outf("--- %d sent, %d received ---\n", sent, got);
+            finished = true;
+        }
+    }
+    bool done() override { return finished; }
+};
+
+void cmd_ping6(Shell& sh, int argc, char** argv) {
+    if (argc < 2) { sh.out("usage: ping6 [-c count] <host or IPv6 address>\n"); return; }
+    int count = 4;
+    for (int i = 1; i < argc - 1; i++) if (!strcmp(argv[i], "-c")) count = atoi(argv[i + 1]);
+    if (!ip6cfg.ready) { sh.err("ping6: no IPv6\n"); return; }
+    sh.prog_keep_screen = true;
+    sh.start_program(new Pinger6(sh, argv[argc - 1], clamp(count, 1, 100)));
 }

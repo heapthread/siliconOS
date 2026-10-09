@@ -38,6 +38,7 @@
 
 static const int FONT_W = 8;
 static const int FONT_H = 12;
+extern bool gfx_vector_text;       // proportional anti-aliased UI text (off = the 8x12 bitmap font)
 
 static inline u32 rgb(u32 r, u32 g, u32 b) { return 0xFF000000 | (r << 16) | (g << 8) | b; }
 static inline u32 argb(u32 a, u32 r, u32 g, u32 b) { return (a << 24) | (r << 16) | (g << 8) | b; }
@@ -76,6 +77,7 @@ struct Canvas {
     Rect clip{0, 0, 0, 0};
     int ox = 0, oy = 0;              // drawing origin offset
     int emoji_px = 12;               // emoji sprite size inside text (12 or 16)
+    bool mono = false;               // text() lays out 8 px cells (code, grids) instead of proportional
 
     void init(u32* p, int width, int height, int pitch_px);
     void set_clip(Rect r);           // r in canvas coordinates (origin applied)
@@ -116,7 +118,23 @@ struct Canvas {
     int  text_n(int x, int y, const char* s, int n, u32 col, int scale = 1, bool bold = false);
     void text_centered(int x, int y, int w, const char* s, u32 col, int scale = 1, bool bold = false);
     void text_shadow(int x, int y, const char* s, u32 col, u32 sh, int scale = 1, bool bold = false);
+    // fixed-pitch text (8 px per cell at scale 1): for grids, code and columns
+    int  text_mono(int x, int y, const char* s, u32 col, int scale = 1, bool bold = false);
+
+    // smooth shapes (anti-aliased corners); alpha 255 = opaque
+    void mix_px(int x, int y, u32 c, u32 a);                           // blend one pixel, clipped
+    void rrect(int x, int y, int w, int h, int r, u32 c, u32 alpha = 255);
+    void rrect_gradient(int x, int y, int w, int h, int r, u32 top, u32 bottom);
+    void rrect_stroke(int x, int y, int w, int h, int r, u32 c, u32 alpha = 255);   // 1 px ring inside the rect
+    void shadow(int x, int y, int w, int h, int r, int spread, u32 alpha);          // soft drop shadow outside the rect
+    void disc(int cx, int cy, int r, u32 c, u32 alpha = 255);
+    void aa_line(float x0, float y0, float x1, float y1, float width, u32 c, u32 alpha = 255);
+    void chevron(int cx, int cy, int size, bool right, u32 c);        // > or v: right=false points down
 };
+int  rr_coverage(int px, int py, int w, int h, int r);              // 0..255 coverage of a rounded rect at a pixel
+int  text_width_mono(const char* s, int scale = 1);
+int  text_line_h(int scale = 1);                                       // line pitch for the current text style
+u32  silicon_cp(u8 b);                                                 // a silicon codepage byte as a Unicode code point
 
 int text_width(const char* s, int scale = 1, bool bold = false);
 extern const u8 font_rows[256][12];

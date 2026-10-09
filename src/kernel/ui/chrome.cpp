@@ -31,9 +31,15 @@ static const char* cur_wait[] = {
     "....XoX....", "....XoX....", "...XoooX...", "..XoooooX..", ".XooXoXooX.", ".XoXoXoXoX.",
     "XoooooooooX", "XXXXXXXXXXX", nullptr};
 
-Rect cursor_rect() { return {ui_mouse_x - 8, ui_mouse_y - 8, 26, 28}; }
+Rect cursor_rect() { return {ui_mouse_x - 14, ui_mouse_y - 14, 42, 42}; }
 
 void draw_cursor(Canvas& c) {
+    static const int hot[10][2] = {{2, 1}, {9, 2}, {7, 12}, {11, 11}, {11, 11}, {10, 10}, {11, 11}, {10, 10}, {10, 10}, {11, 11}};
+    int k = clamp((int)ui_cursor, 0, 9);
+    if (const Image* im = cursor_image(k)) {
+        c.blit(*im, ui_mouse_x - hot[k][0], ui_mouse_y - hot[k][1]);
+        return;
+    }
     const char** art = cur_arrow;
     int hx = 0, hy = 0;
     switch (ui_cursor) {
@@ -45,10 +51,6 @@ void draw_cursor(Canvas& c) {
     case CUR_WAIT: art = cur_wait; hx = 5; hy = 7; break;
     default: break;
     }
-    // soft 1px shadow makes the cursor readable on busy wallpapers
-    for (int y = 0; art[y]; y++)
-        for (int x = 0; art[y][x]; x++)
-            if (art[y][x] != '.') c.put(ui_mouse_x - hx + x + 1, ui_mouse_y - hy + y + 1, blend(c.get(ui_mouse_x - hx + x + 1, ui_mouse_y - hy + y + 1), 0xFF000000, 90));
     for (int y = 0; art[y]; y++)
         for (int x = 0; art[y][x]; x++) {
             char ch = art[y][x];
@@ -63,12 +65,12 @@ MenuState popup;
 static int menu_width(Menu& m) {
     int w = 120;
     for (int i = 0; i < m.count; i++)
-        w = max(w, text_width(m.items[i].label) + text_width(m.items[i].shortcut) + 52);
+        w = max(w, text_width(m.items[i].label) + text_width(m.items[i].shortcut) + 64);
     return w;
 }
 static int menu_height(Menu& m) {
-    int h = 6;
-    for (int i = 0; i < m.count; i++) h += m.items[i].separator ? 7 : 18;
+    int h = 8;
+    for (int i = 0; i < m.count; i++) h += m.items[i].separator ? MENU_SEP_H : MENU_ITEM_H;
     return h;
 }
 
@@ -118,9 +120,9 @@ int menu_hit(int mx, int my) {
     Menu& m = popup.menu;
     int w = menu_width(m);
     if (mx < popup.x || mx >= popup.x + w) return -1;
-    int y = popup.y + 3;
+    int y = popup.y + 4;
     for (int i = 0; i < m.count; i++) {
-        int h = m.items[i].separator ? 7 : 18;
+        int h = m.items[i].separator ? MENU_SEP_H : MENU_ITEM_H;
         if (my >= y && my < y + h) return m.items[i].separator || !m.items[i].enabled ? -2 : i;
         y += h;
     }
@@ -132,34 +134,25 @@ void draw_menu(Canvas& c) {
     Menu& m = popup.menu;
     int w = menu_width(m), h = menu_height(m);
     int x = popup.x, y = popup.y;
-    // unroll downwards over 110ms
-    int p = ease_out((int)min<u64>(256, (ticks() - popup.t0) * 256 / 110));
-    int shown = max(8, h * p / 256);
-    if (p < 256) damage(menu_rect());
-    Rect saved = c.clip;
-    c.clip = c.clip.intersect({x, y, w + 6, shown + 6});
-    c.dither(x + 4, y + 4, w, h, th::ink);
-    c.fill(x, y, w, h, th::paper);
-    c.rect(x, y, w, h, th::ink);
-    c.hline(x + 1, y + 1, w - 2, th::white);
-    int yy = y + 3;
+    c.shadow(x, y + 3, w, h, 8, 12, 70);
+    c.rrect(x, y, w, h, 8, th::border);
+    c.rrect(x + 1, y + 1, w - 2, h - 2, 7, th::paper);
+    int yy = y + 4;
     for (int i = 0; i < m.count; i++) {
         MenuItem& it = m.items[i];
         if (it.separator) {
-            for (int sx = x + 6; sx < x + w - 6; sx += 2) c.put(sx, yy + 3, th::border);
-            yy += 7;
+            c.hline(x + 10, yy + MENU_SEP_H / 2, w - 20, th::border);
+            yy += MENU_SEP_H;
             continue;
         }
         bool hot = i == popup.hover;
-        if (hot) c.fill(x + 3, yy, w - 6, 18, accent());
+        if (hot) c.rrect(x + 4, yy, w - 8, MENU_ITEM_H, 5, accent());
         u32 col = !it.enabled ? th::shadow : hot ? th::white : th::text;
-        if (it.checked) c.text(x + 8, yy + 3, G_CHECK, col);
-        c.text(x + 22, yy + 3, it.label, col, 1, !it.enabled && i == 0);
-        if (it.shortcut[0]) c.text(x + w - 10 - text_width(it.shortcut), yy + 3, it.shortcut, hot ? th::white : th::muted);
-        yy += 18;
+        if (it.checked) { c.aa_line(x + 11, yy + 11.5f, x + 14, yy + 14.5f, 1.6f, col); c.aa_line(x + 14, yy + 14.5f, x + 19, yy + 8, 1.6f, col); }
+        c.text(x + 24, yy + 5, it.label, col, 1, !it.enabled && i == 0);
+        if (it.shortcut[0]) c.text(x + w - 12 - text_width(it.shortcut), yy + 5, it.shortcut, hot ? 0xFFDCE6FF : th::muted);
+        yy += MENU_ITEM_H;
     }
-    if (p < 256) c.hline(x, y + shown - 1, w, th::ink);
-    c.clip = saved;
 }
 
 // ================================================================ top bar
@@ -232,31 +225,34 @@ void open_bar_menu(int i) {
     popup.bar_index = i;
 }
 
+static void bar_pill(Canvas& c, Rect r, bool on, bool hot) {
+    if (on) c.rrect(r.x, 3, r.w, TOPBAR_H - 6, 6, accent());
+    else if (hot) c.rrect(r.x, 3, r.w, TOPBAR_H - 6, 6, th::white, 36);
+}
+
 void draw_topbar(Canvas& c) {
     if (c.clip.intersect({0, 0, SW, TOPBAR_H}).empty()) return;
     build_bar_menus();
-    c.fill_alpha(0, 0, SW, TOPBAR_H, th::bar_bg, 205);
-    c.hline(0, TOPBAR_H - 1, SW, blend(th::bar_bg, accent(), 70));
-    c.hline(0, 0, SW, blend(th::bar_bg, th::white, 30));
-    chip_rect = {4, 0, 28, TOPBAR_H};
+    c.fill_alpha(0, 0, SW, TOPBAR_H, th::bar_bg, 238);
+    c.hline(0, TOPBAR_H - 1, SW, 0xFF000000);
+    const u32 bar_text = 0xFFE8EBF2, bar_dim = 0xFFB4BAC8;
+    chip_rect = {6, 0, 28, TOPBAR_H};
     bool chip_open = popup.open && popup.bar_index == 0;
-    if (chip_open || chip_rect.contains(ui_mouse_x, ui_mouse_y))
-        c.fill(chip_rect.x, 2, chip_rect.w, TOPBAR_H - 4, blend(th::bar_bg, accent(), chip_open ? 200 : 80));
-    c.blit(icon("silicon")->small, 10, 4);
+    bar_pill(c, chip_rect, chip_open, chip_rect.contains(ui_mouse_x, ui_mouse_y));
+    c.blit(icon("silicon")->small, 12, 6);
     bar_menu_rects[0] = chip_rect;
     Window* f = wm_focused();
     const char* app_name = f ? app_display_name(f->app->app_id()) : "silicon";
-    int x = 42;
-    c.text(x, 6, app_name, th::white, 1, true);
-    x += text_width(app_name) + 22;
+    int x = 46;
+    c.text(x, 8, app_name, th::white, 1, true);
+    x += text_width(app_name, 1, true) + 20;
     for (int i = 1; i < bar_menu_count; i++) {
-        int w = text_width(bar_menus[i].title) + 16;
-        bar_menu_rects[i] = {x - 8, 0, w, TOPBAR_H};
+        int w = text_width(bar_menus[i].title) + 18;
+        bar_menu_rects[i] = {x - 9, 0, w, TOPBAR_H};
         bool open = popup.open && popup.bar_index == i;
         bool hov = !open && bar_menu_rects[i].contains(ui_mouse_x, ui_mouse_y);
-        if (open) c.fill(x - 8, 2, w, TOPBAR_H - 4, accent());
-        else if (hov) c.fill(x - 8, 2, w, TOPBAR_H - 4, blend(th::bar_bg, accent(), 60));
-        c.text(x, 6, bar_menus[i].title, open ? th::white : 0xFFD8D0EA);
+        bar_pill(c, bar_menu_rects[i], open, hov);
+        c.text(x, 8, bar_menus[i].title, open ? th::white : bar_text);
         x += w;
     }
     DateTime d;
@@ -268,42 +264,48 @@ void draw_topbar(Canvas& c) {
     if (settings.show_seconds) snprintf(clock, sizeof(clock), "%s %d %s  %d:%02d:%02d%s", weekday_name(d.weekday), d.day, month_name(d.month), hour, d.minute, d.second, ampm);
     else snprintf(clock, sizeof(clock), "%s %d %s  %d:%02d%s", weekday_name(d.weekday), d.day, month_name(d.month), hour, d.minute, ampm);
     int cw = text_width(clock);
-    int rx = SW - cw - 12;
-    clock_rect = {rx - 6, 0, cw + 12, TOPBAR_H};
-    if (clock_rect.contains(ui_mouse_x, ui_mouse_y)) c.fill(clock_rect.x, 2, clock_rect.w, TOPBAR_H - 4, blend(th::bar_bg, accent(), 80));
-    c.text(rx, 6, clock, th::white);
-    rx -= 30;
-    search_rect = {rx - 2, 0, 24, TOPBAR_H};
-    if (search_rect.contains(ui_mouse_x, ui_mouse_y) || launcher_open) c.fill(search_rect.x, 2, search_rect.w, TOPBAR_H - 4, blend(th::bar_bg, accent(), 80));
-    c.blit(icon("launcher")->small, rx + 2, 4);
+    int rx = SW - cw - 14;
+    clock_rect = {rx - 8, 0, cw + 16, TOPBAR_H};
+    bar_pill(c, clock_rect, false, clock_rect.contains(ui_mouse_x, ui_mouse_y));
+    c.text(rx, 8, clock, th::white);
+    rx -= 34;
+    search_rect = {rx - 4, 0, 28, TOPBAR_H};
+    bar_pill(c, search_rect, launcher_open, search_rect.contains(ui_mouse_x, ui_mouse_y));
+    // magnifier
+    c.disc(rx + 9, 12, 5, bar_text);
+    c.disc(rx + 9, 12, 3, launcher_open ? accent() : th::bar_bg);
+    c.aa_line(rx + 13, 16, rx + 17, 20, 1.8f, bar_text);
     // notification bell: a dot for unread items, a slash for do not disturb
-    rx -= 26;
-    bell_rect = {rx - 2, 0, 24, TOPBAR_H};
-    if (bell_rect.contains(ui_mouse_x, ui_mouse_y) || wm_find("notifications")) c.fill(bell_rect.x, 2, bell_rect.w, TOPBAR_H - 4, blend(th::bar_bg, accent(), 80));
-    c.blit(icon("notifications")->small, rx + 2, 4);
-    if (settings.dnd) c.line(rx + 3, 19, rx + 17, 5, th::red);
-    else if (notif_unseen()) c.circle(rx + 16, 6, 3, th::red, true);
-    // network status: a little signal glyph
-    rx -= 26;
+    rx -= 30;
+    bell_rect = {rx - 4, 0, 28, TOPBAR_H};
+    bar_pill(c, bell_rect, false, bell_rect.contains(ui_mouse_x, ui_mouse_y) || wm_find("notifications"));
+    c.rrect(rx + 6, 8, 8, 9, 4, bar_text);
+    c.rrect(rx + 4, 15, 12, 3, 1, bar_text);
+    c.disc(rx + 10, 20, 2, bar_text);
+    if (settings.dnd) c.aa_line(rx + 4, 21, rx + 16, 6, 1.8f, th::red);
+    else if (notif_unseen()) c.disc(rx + 17, 8, 4, th::red);
+    // network status: signal bars
+    rx -= 30;
     extern bool net_link_up();
     bool up = net_link_up();
     for (int i = 0; i < 4; i++) {
-        int bh = 3 + i * 3;
-        c.fill(rx + i * 4, 17 - bh, 3, bh, up ? (i < 4 ? 0xFFE8E0FF : 0) : 0xFF4A4262);
+        int bh = 4 + i * 3;
+        c.rrect(rx + i * 5, 20 - bh, 3, bh, 1, up ? bar_text : 0xFF59606E);
     }
-    rx -= 50;
     int pct = (int)(heap_used() * 100 / max<u64>(1, heap_total()));
-    int lit = clamp((pct * 5 + 99) / 100, 1, 5);
-    for (int i = 0; i < 5; i++) c.fill(rx + i * 8, 8, 6, 8, i < lit ? accent() : 0xFF3A3352);
+    char mem[16];
+    snprintf(mem, sizeof(mem), "mem %d%%", pct);
+    rx -= text_width(mem) + 14;
+    c.text(rx, 8, mem, bar_dim);
     if (settings.show_fps) {
         char fps[16];
         if (ui_fps() < 6) strlcpy(fps, "idle", sizeof(fps));   // nothing changed on screen: no frames needed
         else snprintf(fps, sizeof(fps), "%d fps", ui_fps());
-        rx -= text_width(fps) + 12;
-        c.text(rx, 6, fps, ui_fps() >= 50 || ui_fps() < 6 ? 0xFF7FE0A8 : ui_fps() >= 25 ? 0xFFFFD27F : 0xFFFF6B8B, 1, true);
+        rx -= text_width(fps) + 14;
+        c.text(rx, 8, fps, ui_fps() >= 50 || ui_fps() < 6 ? 0xFF7FE0A8 : ui_fps() >= 25 ? 0xFFFFD27F : 0xFFFF6B8B, 1, true);
     }
-    rx -= text_width(settings.user) + 14;
-    c.text(rx, 6, settings.user, 0xFFB8AED0);
+    rx -= text_width(settings.user) + 16;
+    c.text(rx, 8, settings.user, bar_dim);
 }
 
 // ================================================================ launcher (ctrl+space)
@@ -379,7 +381,7 @@ void launcher_hide() {
     damage_all();
 }
 
-Rect launcher_rect() { return {(SW - 480) / 2 - 8, 130, 496, 84 + lcount * 34}; }
+Rect launcher_rect() { return {(SW - 560) / 2 - 12, 110, 584, 96 + lcount * 40}; }
 
 void launcher_activate(int i) {
     if (i < 0 || i >= lcount) return;
@@ -392,28 +394,35 @@ void launcher_activate(int i) {
 
 void draw_launcher(Canvas& c) {
     if (!launcher_open) return;
-    int p = ease_out((int)min<u64>(256, (ticks() - launcher_t0) * 256 / 160));
+    int p = ease_out((int)min<u64>(256, (ticks() - launcher_t0) * 256 / 120));
     if (p < 256) damage_all();
-    c.fill_alpha(0, TOPBAR_H, SW, SH - TOPBAR_H, 0xFF100C1C, (u32)(120 * p / 256));
+    c.fill_alpha(0, TOPBAR_H, SW, SH - TOPBAR_H, 0xFF0C0F16, (u32)(110 * p / 256));
     Rect rr = launcher_rect();
-    Rect r{rr.x + 8, rr.y + 20 - 20 * p / 256, 480, 64 + lcount * 34};
-    c.dither(r.x + 6, r.y + 6, r.w, r.h, th::ink);
-    draw_bevel(c, r.x, r.y, r.w, r.h, th::paper);
-    c.fill(r.x + 2, r.y + 2, r.w - 4, 4, accent());
-    c.blit(icon("launcher")->mid, r.x + 14, r.y + 18);
-    draw_bevel(c, r.x + 56, r.y + 16, r.w - 72, 36, th::white, true);
+    Rect r{rr.x + 12, rr.y + 12, 560, 72 + lcount * 40};
+    c.shadow(r.x, r.y + 4, r.w, r.h, 12, 16, 80);
+    c.rrect(r.x, r.y, r.w, r.h, 12, th::border);
+    c.rrect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 11, th::paper);
+    // search field
+    c.disc(r.x + 34, r.y + 36, 8, th::muted);
+    c.disc(r.x + 34, r.y + 36, 6, th::paper);
+    c.aa_line(r.x + 40, r.y + 42, r.x + 47, r.y + 49, 2.2f, th::muted);
     const char* t = launcher_field.text;
-    if (!t[0]) c.text(r.x + 66, r.y + 22, "search apps, files, urls", th::shadow, 2);
-    else c.text(r.x + 66, r.y + 22, t, th::text, 2);
-    if ((ticks() / 500) % 2 == 0) c.fill(r.x + 66 + launcher_field.cur * 16, r.y + 21, 2, 24, accent());
+    if (!t[0]) c.text(r.x + 60, r.y + 22, "Search apps, files, web", th::shadow, 2);
+    else c.text(r.x + 60, r.y + 22, t, th::text, 2);
+    char pre[132];
+    int n = min(launcher_field.cur, 128);
+    memcpy(pre, t, n);
+    pre[n] = 0;
+    if ((ticks() / 500) % 2 == 0) c.fill(r.x + 60 + text_width(pre, 2), r.y + 22, 2, 26, accent());
+    c.hline(r.x + 1, r.y + 64, r.w - 2, th::border);
     for (int i = 0; i < lcount; i++) {
-        int y = r.y + 60 + i * 34;
+        int y = r.y + 72 + i * 40;
         bool sel = i == launcher_sel;
-        if (sel) c.fill(r.x + 8, y, r.w - 16, 32, accent());
-        c.blit(icon(lres[i].icon)->mid, r.x + 14, y);
-        c.text(r.x + 56, y + 5, lres[i].label, sel ? th::white : th::text, 1, true);
-        c.text_n(r.x + 56, y + 18, lres[i].app ? (lres[i].path[0] ? "web" : "application") : lres[i].path, 50,
-                 sel ? 0xFFEDE6FF : th::muted);
+        if (sel) c.rrect(r.x + 8, y - 2, r.w - 16, 38, 8, accent());
+        c.blit(icon(lres[i].icon)->mid, r.x + 18, y + 1);
+        c.text(r.x + 62, y + 4, lres[i].label, sel ? th::white : th::text, 1, true);
+        c.text_n(r.x + 62, y + 19, lres[i].app ? (lres[i].path[0] ? "Web" : "Application") : lres[i].path, 60,
+                 sel ? 0xFFDCE6FF : th::muted);
     }
 }
 
@@ -431,14 +440,13 @@ void draw_switcher(Canvas& c) {
     if (!switcher_open || !windows.len) return;
     int n = windows.len;
     Rect r = switcher_rect();
-    c.dither(r.x + 6, r.y + 6, r.w, r.h, th::ink);
-    c.fill_alpha(r.x, r.y, r.w, r.h, th::bar_bg, 235);
-    c.rect(r.x, r.y, r.w, r.h, accent());
+    c.shadow(r.x, r.y + 4, r.w, r.h, 12, 16, 90);
+    c.rrect(r.x, r.y, r.w, r.h, 12, th::bar_bg, 240);
     for (int i = 0; i < n; i++) {
         Window* win = windows[n - 1 - i];
         int ix = r.x + 12 + i * 172;
         bool sel = i == switcher_sel;
-        if (sel) { c.fill(ix - 4, r.y + 8, 168, 130, blend(th::bar_bg, accent(), 140)); c.rect(ix - 4, r.y + 8, 168, 130, accent()); }
+        if (sel) { c.rrect(ix - 4, r.y + 8, 168, 130, 8, accent(), 90); c.rrect_stroke(ix - 4, r.y + 8, 168, 130, 8, accent()); }
         // live thumbnail of the window surface, aspect preserved
         if (win->surf.px) {
             int tw = 160, th_ = 104;
@@ -446,12 +454,12 @@ void draw_switcher(Canvas& c) {
             if (sw * th_ > sh * tw) th_ = sh * tw / sw; else tw = sw * th_ / sh;
             int tx = ix + (160 - tw) / 2, ty = r.y + 14 + (104 - th_) / 2;
             c.blit_stretch_alpha(win->surf, tx, ty, tw, th_, win->minimized ? 130 : 255);
-            c.rect(tx - 1, ty - 1, tw + 2, th_ + 2, th::ink);
+            c.rrect_stroke(tx - 1, ty - 1, tw + 2, th_ + 2, 4, 0xFF000000, 120);
         }
         c.blit(icon(win->app->icon_name())->mid, ix + 128, r.y + 96);
         char t[24];
         strlcpy(t, win->title, sizeof(t));
-        c.text_centered(ix, r.y + 144, 160, t, sel ? th::white : 0xFFB8AED0, 1, sel);
+        c.text_centered(ix, r.y + 144, 160, t, sel ? th::white : 0xFFB4BAC8, 1, sel);
     }
 }
 
@@ -527,7 +535,7 @@ void ui_notify(const char* title, const char* body, const char* icon_name) {
     damage(toast_area());
 }
 
-Rect toast_area() { return {SW - 300, TOPBAR_H, 300, 4 * 62 + 20}; }
+Rect toast_area() { return {SW - 320, TOPBAR_H, 320, 4 * 62 + 40}; }
 // expire old toasts here (outside compose, so the damage they leave behind isn't lost)
 bool toasts_active() {
     u64 t = ticks();
@@ -548,9 +556,9 @@ void draw_toasts(Canvas& c) {
         else if (el > 4000) { int p = (el - 4000) * 256 / 400; slide = 300 * p * p / (256 * 256); }
         int w = 280, h = 54;
         int x = SW - w - 10 + slide, y = TOPBAR_H + 10 + i * (h + 8);
-        c.dither(x + 4, y + 4, w, h, th::ink);
-        draw_bevel(c, x, y, w, h, th::paper);
-        c.fill(x + 2, y + 2, 3, h - 4, accent());
+        c.shadow(x, y + 3, w, h, 10, 12, 70);
+        c.rrect(x, y, w, h, 10, th::border);
+        c.rrect(x + 1, y + 1, w - 2, h - 2, 9, th::paper);
         c.blit(icon(to.icon)->mid, x + 12, y + 11);
         c.text(x + 52, y + 9, to.title, th::text, 1, true);
         const char* b = to.body;
@@ -563,7 +571,7 @@ void draw_toasts(Canvas& c) {
         }
         // a thin progress line shows how long the toast stays
         int life = clamp(4000 - el, 0, 4000);
-        c.hline(x + 6, y + h - 3, (w - 12) * life / 4000, blend(th::paper, accent(), 120));
+        c.rrect(x + 10, y + h - 4, (w - 20) * life / 4000, 2, 1, accent(), 150);
     }
 }
 
@@ -694,24 +702,22 @@ void draw_desktop_icons(Canvas& c) {
         Rect r = desk_cell(i);
         if (c.clip.intersect(r).empty()) continue;
         FsNode* n = home->children[i];
-        const char* ic = n->dir ? (n->children.len ? "folder_full" : "folder")
-                       : str_icontains(n->name, ".pix") || is_image_name(n->name) ? "image_file"
-                       : str_icontains(n->name, ".htm") ? "browser" : "text_file";
+        const char* ic = file_icon_name(n->name, n->dir, n->children.len > 0);
         Image& img = icon(ic)->big;
         int ix = r.x + (r.w - 64) / 2;
         bool sel = desk_selected(i);
-        if (desk_dragging && sel) { c.fill_alpha(ix - 3, r.y - 3, 70, 70, th::white, 20); continue; }
+        if (desk_dragging && sel) { c.rrect(r.x + 2, r.y - 4, r.w - 4, r.h, 8, th::white, 24); continue; }
         bool hov = !sel && r.contains(ui_mouse_x, ui_mouse_y) && !wm_focused_covers(ui_mouse_x, ui_mouse_y);
-        if (sel) c.fill_alpha(ix - 3, r.y - 3, 70, 70, accent(), 110);
-        else if (hov) c.fill_alpha(ix - 3, r.y - 3, 70, 70, th::white, 40);
+        if (sel) c.rrect(r.x + 2, r.y - 4, r.w - 4, r.h, 8, accent(), 110);
+        else if (hov) c.rrect(r.x + 2, r.y - 4, r.w - 4, r.h, 8, th::white, 40);
         c.blit(img, ix, r.y);
         char shown[24];
         strlcpy(shown, n->name, sizeof(shown));
         if (strlen(n->name) > 11) { shown[9] = 0; strlcat(shown, G_ELLIP, sizeof(shown)); }
         int tw = text_width(shown);
         int tx = r.x + (r.w - tw) / 2;
-        if (sel) c.fill(tx - 3, r.y + 67, tw + 6, 14, accent());
-        else c.fill_alpha(tx - 3, r.y + 67, tw + 6, 14, th::bar_bg, 120);
+        c.text(tx, r.y + 69, shown, 0xFF000000, 1, false);
+        c.text(tx + 1, r.y + 69, shown, 0xFF000000, 1, false);
         c.text(tx, r.y + 68, shown, th::white);
     }
 }
@@ -751,22 +757,15 @@ void draw_desk_drag(Canvas& c) {
         if (!desk_selected(i)) continue;
         Rect r = desk_cell(i);
         FsNode* nd = home->children[i];
-        const char* ic = nd->dir ? (nd->children.len ? "folder_full" : "folder")
-                       : str_icontains(nd->name, ".pix") || is_image_name(nd->name) ? "image_file"
-                       : str_icontains(nd->name, ".htm") ? "browser" : "text_file";
+        const char* ic = file_icon_name(nd->name, nd->dir, nd->children.len > 0);
         int x = r.x + drag_dx + (r.w - 64) / 2, y = r.y + drag_dy;
         c.blit_tinted(icon(ic)->big, x, y, accent(), 50);
         char shown[24];
         strlcpy(shown, nd->name, sizeof(shown));
         if (strlen(nd->name) > 11) { shown[9] = 0; strlcat(shown, G_ELLIP, sizeof(shown)); }
         int tw = text_width(shown);
-        c.fill_alpha(r.x + drag_dx + (r.w - tw) / 2 - 3, r.y + drag_dy + 67, tw + 6, 14, th::bar_bg, 170);
         c.text(r.x + drag_dx + (r.w - tw) / 2, r.y + drag_dy + 68, shown, th::white);
     }
-}
-static bool cell_taken(int col, int row, const bool* moving, int n) {
-    for (int i = 0; i < n; i++) if (!moving[i] && slot_col[i] == col && slot_row[i] == row) return true;
-    return false;
 }
 void desk_drag_drop(int mx, int my) {
     bool was = desk_dragging;

@@ -1,10 +1,12 @@
 // silicon - Monitor: running apps and live performance graphs
 #include "apps.h"
 #include "../../arch/arch.h"
+#include "../../proc/proc.h"
 
 struct MonitorApp : App {
     int tab = 1;
     int sel = -1;
+    int psel = -1;               // selected program
     u8 cpu[90], mem[90];
     int samples = 0;
     u64 last_t = 0, last_idle = 0, last_ticks = 0;
@@ -56,11 +58,52 @@ struct MonitorApp : App {
         // tabs
         c.fill(0, 0, w, 32, th::panel);
         c.hline(0, 31, w, th::border);
-        const char* tabs[2] = {"Apps", "Performance"};
-        for (int i = 0; i < 2; i++) {
+        const char* tabs[3] = {"Apps", "Performance", "Programs"};
+        for (int i = 0; i < 3; i++) {
             Rect r{10 + i * 110, 6, 100, 26};
-            if (tab == i) { c.fill(r.x, r.y, r.w, r.h, th::paper); c.rect(r.x, r.y, r.w, r.h + 1, th::border); c.hline(r.x + 1, r.y + r.h, r.w - 2, th::paper); }
+            if (tab == i) { c.rrect(r.x, r.y, r.w, r.h + 4, 6, th::border); c.rrect(r.x + 1, r.y + 1, r.w - 2, r.h + 4, 5, th::paper); }
             c.text_centered(r.x, r.y + 7, r.w, tabs[i], tab == i ? th::text : th::muted, 1, tab == i);
+        }
+        if (tab == 2) {
+            c.fill(10, 42, w - 20, 20, th::panel);
+            c.text(14, 46, "program", th::muted, 1, true);
+            c.text(w - 330, 46, "pid", th::muted, 1, true);
+            c.text(w - 280, 46, "threads", th::muted, 1, true);
+            c.text(w - 210, 46, "memory", th::muted, 1, true);
+            c.text(w - 130, 46, "cpu", th::muted, 1, true);
+            int n = proc_count();
+            int y = 64;
+            // the kernel is always there
+            c.text(14, y + 6, "silicon (kernel, desktop, drivers)", th::muted);
+            char t[32];
+            c.text(w - 330, y + 6, "0", th::muted);
+            snprintf(t, sizeof(t), "%u%%", (u32)(1000 - proc_cpu_permille()) / 10);
+            c.text(w - 130, y + 6, t, th::muted);
+            for (int i = 0; i < n; i++) {
+                Proc* p = proc_at(i);
+                y = 88 + i * 24;
+                if (y > h - 60) break;
+                bool s = i == psel;
+                if (s) c.rrect(10, y, w - 20, 24, 5, accent());
+                else if (i % 2) c.rrect(10, y, w - 20, 24, 5, th::panel);
+                u32 col = s ? th::white : th::text, mc = s ? th::white : th::muted;
+                c.blit(icon("module")->small, 16, y + 4);
+                c.text_n(40, y + 6, p->name, (w - 400) / 8, col);
+                snprintf(t, sizeof(t), "%d", p->pid);
+                c.text(w - 330, y + 6, t, mc);
+                snprintf(t, sizeof(t), "%d", p->threads.len);
+                c.text(w - 280, y + 6, t, mc);
+                snprintf(t, sizeof(t), "%u KB", p->mem_pages * 4);
+                c.text(w - 210, y + 6, t, mc);
+                u64 permille = p->cpu_tsc / max<u64>(1, (u64)cpu_mhz() * (ticks() - p->start_ms + 1));
+                snprintf(t, sizeof(t), "%u.%u%%", (u32)(permille / 10), (u32)(permille % 10));
+                c.text(w - 130, y + 6, t, mc);
+            }
+            bool can = psel >= 0 && psel < n;
+            draw_button(c, w - 120, h - 34, 100, 24, "End program", hot(w - 120, h - 34, 100, 24), true, can);
+            snprintf(t, sizeof(t), "%d running", n);
+            c.text(14, h - 28, t, th::muted);
+            return;
         }
         if (tab == 0) {
             c.fill(10, 42, w - 20, 20, th::panel);
@@ -134,8 +177,13 @@ struct MonitorApp : App {
     void on_mouse(const MouseEv& e) override {
         if (e.kind != M_DOWN && e.kind != M_UP && e.kind != M_DBL) return;
         if (e.kind == M_DOWN) {
-            for (int i = 0; i < 2; i++) if (Rect{10 + i * 110, 6, 100, 26}.contains(e.x, e.y)) tab = i;
+            for (int i = 0; i < 3; i++) if (Rect{10 + i * 110, 6, 100, 26}.contains(e.x, e.y)) tab = i;
             if (tab == 0 && e.y >= 64 && e.y < ch - 60) sel = (e.y - 64) / 24;
+            if (tab == 2 && e.y >= 88 && e.y < ch - 60) psel = (e.y - 88) / 24;
+        }
+        if (tab == 2 && e.kind == M_UP && Rect{cw - 120, ch - 34, 100, 24}.contains(e.x, e.y)) {
+            if (psel >= 0 && psel < proc_count()) proc_kill(proc_at(psel), "ended from the monitor");
+            psel = -1;
         }
         int n = wm_count();
         bool can = sel >= 0 && sel < n;
@@ -151,14 +199,14 @@ struct MonitorApp : App {
         ui_invalidate();
     }
     void on_key(const KeyEvent& e) override {
-        if (e.key == K_TAB) tab ^= 1;
+        if (e.key == K_TAB) tab = (tab + 1) % 3;
         if (e.key == K_DOWN) sel++;
         if (e.key == K_UP && sel > 0) sel--;
         ui_invalidate();
     }
     int menus(Menu* m) override {
         m[0].clear(); strlcpy(m[0].title, "View", 24);
-        m[0].add("Apps", 1, "", true, tab == 0).add("Performance", 2, "", true, tab == 1);
+        m[0].add("Apps", 1, "", true, tab == 0).add("Performance", 2, "", true, tab == 1).add("Programs", 3, "", true, tab == 2);
         return 1;
     }
     void on_command(int cmd) override { tab = cmd - 1; ui_invalidate(); }

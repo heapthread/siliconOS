@@ -57,6 +57,8 @@ void dock_context(int i);
 Rect dock_icon_rect(const char* id);
 
 // ---------------------------------------------------------------- chrome (chrome.cpp)
+static const int MENU_ITEM_H = 24;
+static const int MENU_SEP_H = 9;
 struct MenuState {
     bool open = false;
     Menu menu;

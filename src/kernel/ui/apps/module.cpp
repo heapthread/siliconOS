@@ -236,12 +236,14 @@ extern "C" u64 asset_count;
 void modules_install_samples() {
     for (u64 i = 0; i < asset_count; i++) {
         AssetEntry& e = asset_table[i];
-        if (!str_starts(e.name, "sapp/")) continue;
+        bool user = str_starts(e.name, "uapp/");
+        if (!str_starts(e.name, "sapp/") && !user) continue;
         char path[96];
-        snprintf(path, sizeof(path), "/home/apps/%s.sapp", e.name + 5);
-        if (fs_lookup(path)) continue;
+        snprintf(path, sizeof(path), "/home/apps/%s.%s", e.name + 5, user ? "uapp" : "sapp");
+        FsNode* have = fs_lookup(path);
+        if (have && have->size == (u32)e.len && !memcmp(have->data, e.data, (u32)e.len)) continue;     // current already
         fs_mkdirs("/home/apps");
-        FsNode* f = fs_create_path(path, false);
+        FsNode* f = have ? have : fs_create_path(path, false);
         if (f) fs_write(f, e.data, (u32)e.len);
     }
 }

@@ -428,3 +428,36 @@ struct Sleeper : ConsoleProgram {
 };
 
 ConsoleProgram* make_sleep(Console* c, u32 ms) { return new Sleeper(ms); }
+
+// ================================================================ password prompt (sudo)
+#include "../ui/lockscreen.h"
+struct PasswordPrompt : ConsoleProgram {
+    Shell* sh;
+    char cmd[256];
+    char pw[64];
+    int n = 0;
+    bool finished = false;
+    PasswordPrompt(Shell* s, const char* c) : sh(s) {
+        strlcpy(cmd, c, sizeof(cmd));
+        pw[0] = 0;
+        sh->prog_keep_screen = true;
+        sh->out("[sudo] password for ");
+        sh->out(settings.user);
+        sh->out(": ");
+    }
+    void on_key(const KeyEvent& e) override {
+        if (!e.down) return;
+        if (e.key == K_ESC || (e.ctrl && e.key == 'c')) { sh->out("\n"); finished = true; return; }
+        if (e.key == K_ENTER) {
+            sh->out("\n");
+            if (password_check(pw)) { sh->after_cmd = strdup(cmd); sh->after_root = true; }
+            else sh->err("sudo: sorry, wrong password\n");
+            finished = true;
+            return;
+        }
+        if (e.key == K_BACKSPACE) { if (n) pw[--n] = 0; return; }
+        if (e.ch >= 32 && e.ch < 127 && n < 62) { pw[n++] = e.ch; pw[n] = 0; }
+    }
+    bool done() override { return finished; }
+};
+ConsoleProgram* make_password_prompt(Shell* sh, const char* cmd) { return new PasswordPrompt(sh, cmd); }

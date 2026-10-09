@@ -17,7 +17,11 @@ bool url_parse(const char* s, Url& u) {
     if (strcmp(u.scheme, "http") && strcmp(u.scheme, "https")) return false;
     u.port = !strcmp(u.scheme, "https") ? 443 : 80;
     int h = 0;
-    while (*s && *s != '/' && *s != ':' && *s != '?' && *s != '#' && h < 127) u.host[h++] = to_lower(*s++);
+    if (*s == '[') {                                   // an IPv6 address in brackets
+        s++;
+        while (*s && *s != ']' && h < 127) u.host[h++] = to_lower(*s++);
+        if (*s == ']') s++;
+    } else while (*s && *s != '/' && *s != ':' && *s != '?' && *s != '#' && h < 127) u.host[h++] = to_lower(*s++);
     u.host[h] = 0;
     if (!h) return false;
     if (*s == ':') { s++; u.port = (u16)atoi(s); while (*s >= '0' && *s <= '9') s++; }
@@ -142,6 +146,8 @@ struct HttpRequest {
     char pxhost[128];
     u16 pxport;
     bool px_sent;
+    bool v6, try6;                 // connecting over IPv6
+    u8 ip6[16];
     char pxbuf[400];
     int pxlen;
 };
@@ -292,10 +298,18 @@ int http_step(HttpRequest* r) {
             break;
         }
         const char* via = r->px ? r->pxhost : r->u.host;
-        int st = dns_resolve(via, &r->ip);
+        int st;
+        if (r->v6 || r->try6) {
+            st = 1;
+            if (!r->v6) { st = dns6_resolve(via, r->ip6); if (st > 0) r->v6 = true; }
+        } else if (ip6cfg.ready && strchr(via, ':') && str_to_ip6(via, r->ip6)) { r->v6 = true; st = 1; }
+        else {
+            st = dns_resolve(via, &r->ip);
+            if (st < 0 && ip6cfg.ready) { r->try6 = true; st = 0; r->phase_t = t; }       // no A record: look for an AAAA
+        }
         if (st < 0) { char m[200]; snprintf(m, sizeof(m), "couldn't find %s (DNS lookup failed)", via); fail(r, m); }
         else if (st > 0) {
-            r->sock = tcp_connect(r->ip, r->px ? r->pxport : r->u.port);
+            r->sock = r->v6 ? tcp_connect6(r->ip6, r->px ? r->pxport : r->u.port) : tcp_connect(r->ip, r->px ? r->pxport : r->u.port);
             if (r->sock < 0) fail(r, "out of sockets");
             else set_phase(r, HTTP_CONNECTING);
         } else if (t - r->phase_t > 8000) fail(r, "DNS lookup timed out");
@@ -340,10 +354,12 @@ int http_step(HttpRequest* r) {
         char port[12] = "";
         if ((!strcmp(r->u.scheme, "http") && r->u.port != 80) || (!strcmp(r->u.scheme, "https") && r->u.port != 443))
             snprintf(port, sizeof(port), ":%u", r->u.port);
+        char hosth[150];
+        if (strchr(r->u.host, ':')) snprintf(hosth, sizeof(hosth), "[%s]", r->u.host); else strlcpy(hosth, r->u.host, sizeof(hosth));
         int n = snprintf(req, sizeof(req),
                          "%s %s HTTP/1.1\r\nHost: %s%s\r\nUser-Agent: %s\r\n"
                          "Accept: %s\r\nAccept-Encoding: identity\r\nConnection: close\r\n",
-                         r->method, (r->px && !r->tls) ? r->url : r->u.path, r->u.host, port, r->ua, r->accept);
+                         r->method, (r->px && !r->tls) ? r->url : r->u.path, hosth, port, r->ua, r->accept);
         if (r->req_body) n += snprintf(req + n, sizeof(req) - n, "Content-Type: %s\r\nContent-Length: %u\r\n", r->req_ctype, (u32)strlen(r->req_body));
         n += snprintf(req + n, sizeof(req) - n, "\r\n");
         bool ok = r->tls ? tls_send(r->tls, req, n) : tcp_send(r->sock, req, n);

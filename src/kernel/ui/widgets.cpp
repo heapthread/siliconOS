@@ -31,78 +31,76 @@ void fmt_double(double v, char* out, int n, int max_dec) {
 }
 
 // ---------------------------------------------------------------- primitives
+// Flat controls with softly rounded corners. `face` is the fill; the edge is a darker tone of it.
+static int ctl_radius(int w, int h) { return min(5, max(2, min(w, h) / 4)); }
+
 void draw_bevel(Canvas& c, int x, int y, int w, int h, u32 face, bool sunken) {
-    c.fill(x + 1, y + 1, w - 2, h - 2, face);
-    c.hline(x + 1, y, w - 2, th::ink);
-    c.hline(x + 1, y + h - 1, w - 2, th::ink);
-    c.vline(x, y + 1, h - 2, th::ink);
-    c.vline(x + w - 1, y + 1, h - 2, th::ink);
-    u32 hi = sunken ? shade(face, 80) : blend(face, th::white, 140);
-    u32 lo = sunken ? blend(face, th::white, 120) : shade(face, 78);
-    c.hline(x + 1, y + 1, w - 2, hi);
-    c.vline(x + 1, y + 1, h - 2, hi);
-    c.hline(x + 1, y + h - 2, w - 2, lo);
-    c.vline(x + w - 2, y + 1, h - 2, lo);
+    int r = ctl_radius(w, h);
+    u32 edge = sunken ? shade(face, 80) : shade(face, 86);
+    if (face == th::white || face == th::paper) edge = th::border;
+    c.rrect(x, y, w, h, r, edge);
+    c.rrect(x + 1, y + 1, w - 2, h - 2, max(0, r - 1), face);
+    if (sunken && face != accent()) c.hline(x + r, y + 1, w - 2 * r, shade(face, 95));     // faint inner top edge
 }
 
 void draw_button(Canvas& c, int x, int y, int w, int h, const char* label, bool hot, bool primary, bool enabled) {
-    u32 face = primary ? accent() : th::panel;
-    if (hot && enabled) face = primary ? blend(face, th::white, 50) : blend(face, accent(), 50);
     bool pressed = hot && ui_mouse_left && enabled;
-    draw_bevel(c, x, y, w, h, face, pressed);
+    u32 face = primary ? accent() : th::white;
+    if (!enabled) face = primary ? blend(accent(), th::paper, 140) : th::panel;
+    else if (pressed) face = primary ? shade(accent(), 82) : th::panel_dk;
+    else if (hot) face = primary ? blend(accent(), th::white, 40) : blend(th::white, accent(), 28);
+    int r = ctl_radius(w, h);
+    if (!primary) { c.rrect(x, y + 1, w, h, r, 0xFF000000, 14); }                  // hairline lift
+    u32 edge = primary ? shade(accent(), 78) : (hot && enabled ? accent() : th::border);
+    c.rrect(x, y, w, h, r, edge);
+    c.rrect(x + 1, y + 1, w - 2, h - 2, max(0, r - 1), face);
     u32 col = !enabled ? th::shadow : primary ? th::white : th::text;
-    int off = pressed ? 1 : 0;
-    c.text_centered(x + off, y + (h - FONT_H) / 2 + off, w, label, col, 1, primary);
+    c.text_centered(x, y + (h - FONT_H) / 2, w, label, col, 1, primary);
 }
 
 void draw_checkbox(Canvas& c, int x, int y, const char* label, bool on) {
-    draw_bevel(c, x, y, 14, 14, th::white, true);
     if (on) {
-        c.fill(x + 3, y + 3, 8, 8, accent());
-        c.hline(x + 3, y + 3, 8, blend(accent(), th::white, 120));
+        c.rrect(x, y, 15, 15, 4, accent());
+        c.aa_line(x + 3.6f, y + 7.8f, x + 6.4f, y + 10.6f, 1.8f, th::white);
+        c.aa_line(x + 6.4f, y + 10.6f, x + 11.4f, y + 4.6f, 1.8f, th::white);
+    } else {
+        c.rrect(x, y, 15, 15, 4, shade(th::border, 92));
+        c.rrect(x + 1, y + 1, 13, 13, 3, th::white);
     }
-    c.text(x + 20, y + 1, label, th::text);
+    c.text(x + 23, y + 1, label, th::text);
 }
 
 void draw_scrollbar(Canvas& c, int x, int y, int h, int total, int visible, int offset) {
-    c.fill(x, y, 10, h, th::panel_dk);
-    c.vline(x, y, h, th::border);
     if (total <= visible) return;
-    int th_h = max(16, h * visible / total);
+    int th_h = max(20, h * visible / total);
     int ty = y + (h - th_h) * offset / max(1, total - visible);
-    draw_bevel(c, x + 1, ty, 9, th_h, accent());
+    c.rrect(x + 3, ty, 5, th_h, 2, th::muted, 150);
 }
 
 void draw_panel(Canvas& c, int x, int y, int w, int h, const char* title) {
-    c.fill(x, y, w, h, th::panel);
-    c.rect(x, y, w, h, th::border);
-    c.hline(x + 1, y + 1, w - 2, th::white);
-    if (title) {
-        int tw = text_width(title) + 8;
-        c.fill(x + 8, y - 6, tw, 12, th::panel);
-        c.text(x + 12, y - 6, title, th::muted, 1, true);
-    }
+    c.rrect(x, y, w, h, 6, th::border);
+    c.rrect(x + 1, y + 1, w - 2, h - 2, 5, th::panel);
+    if (title) c.text(x + 12, y + 8, title, th::muted, 1, true);
 }
 
 void draw_progress(Canvas& c, int x, int y, int w, int h, int pct, u32 color) {
-    draw_bevel(c, x, y, w, h, th::white, true);
-    int fw = max(pct > 0 ? 4 : 0, (w - 4) * clamp(pct, 0, 100) / 100);
-    // segmented "die" fill
-    for (int sx = 0; sx + 4 <= fw; sx += 6) c.fill(x + 2 + sx, y + 2, 4, h - 4, color);
+    int r = h / 2;
+    c.rrect(x, y, w, h, r, th::panel_dk);
+    int fw = pct > 0 ? max(h, w * clamp(pct, 0, 100) / 100) : 0;
+    if (fw) c.rrect(x, y, fw, h, r, color);
 }
 
 void draw_icon_label(Canvas& c, Icon* ic, int x, int y, int cell_w, const char* label, bool selected, bool small) {
     const Image& img = small ? ic->mid : ic->big;
     int ix = x + (cell_w - img.w) / 2;
-    if (selected) c.fill_alpha(ix - 3, y - 3, img.w + 6, img.h + 6, accent(), 90);
-    c.blit(img, ix, y);
     char shown[24];
     strlcpy(shown, label, sizeof(shown));
     if (strlen(label) > 13) { shown[11] = 0; strlcat(shown, G_ELLIP, sizeof(shown)); }
     int tw = text_width(shown);
-    int tx = x + (cell_w - tw) / 2, ty = y + img.h + 4;
-    if (selected) c.fill(tx - 2, ty - 1, tw + 4, FONT_H + 2, accent());
-    c.text(tx, ty, shown, selected ? th::white : th::text);
+    int tx = x + (cell_w - tw) / 2, ty = y + img.h + 5;
+    if (selected) c.rrect(x + 2, y - 4, cell_w - 4, img.h + 28, 8, accent(), 60);
+    c.blit(img, ix, y);
+    c.text(tx, ty, shown, th::text);
 }
 
 // ---------------------------------------------------------------- text field
@@ -217,33 +215,56 @@ bool TextField::on_key(const KeyEvent& e) {
     return false;
 }
 
+static int prefix_w(const char* t, int n) {
+    char tmp[132];
+    n = min(n, 128);
+    memcpy(tmp, t, n);
+    tmp[n] = 0;
+    return text_width(tmp);
+}
+
+// the character index whose left edge is closest to rel_x (pixels from the start of the visible text)
+static int index_at(const char* t, int len, int first, int rel_x) {
+    for (int i = first; i < len; i++) {
+        int a = prefix_w(t + first, i - first), b = prefix_w(t + first, i + 1 - first);
+        if (rel_x < (a + b) / 2) return i;
+    }
+    return len;
+}
+
 void TextField::click(int rel_x, int w, bool shift) {
-    int i = clamp(scroll + (rel_x - 5 + FONT_W / 2) / FONT_W, 0, len);
+    int i = index_at(text, len, scroll, rel_x - 6);
     if (shift) { if (anchor < 0) anchor = cur; }
     else anchor = i;                        // a click may start a drag selection
     cur = i;
 }
 
 void TextField::drag(int rel_x, int w) {
-    cur = clamp(scroll + (rel_x - 5 + FONT_W / 2) / FONT_W, 0, len);
+    cur = index_at(text, len, scroll, rel_x - 6);
 }
 
 void TextField::draw(Canvas& c, int x, int y, int w) {
-    draw_bevel(c, x, y, w, 20, th::white, true);
-    if (focused) c.rect(x - 1, y - 1, w + 2, 22, accent());
-    int max_chars = max(1, (w - 10) / FONT_W);
+    c.rrect(x, y, w, 20, 4, focused ? accent() : th::border);
+    c.rrect(x + 1, y + 1, w - 2, 18, 3, th::white);
+    if (focused) c.rrect_stroke(x - 1, y - 1, w + 2, 22, 5, accent(), 90);
     if (cur < scroll) scroll = cur;
-    if (cur > scroll + max_chars - 1) scroll = cur - max_chars + 1;
+    while (scroll < cur && prefix_w(text + scroll, cur - scroll) > w - 14) scroll++;
     scroll = clamp(scroll, 0, max(0, len));
     int start = scroll;
+    Rect oc = c.clip;
+    c.clip = Rect{x + 2 + c.ox, y + 1 + c.oy, w - 4, 18}.intersect(oc);
     if (has_sel()) {
-        int a = max(min(anchor, cur), start), b = min(max(anchor, cur), start + max_chars);
-        if (b > a) c.fill(x + 5 + (a - start) * FONT_W, y + 3, (b - a) * FONT_W, 14, blend(th::white, accent(), 130));
+        int a = max(min(anchor, cur), start), b = max(anchor, cur);
+        int xa = password ? (a - start) * 8 : prefix_w(text + start, a - start);
+        int xb = password ? (b - start) * 8 : prefix_w(text + start, b - start);
+        if (b > a) c.fill(x + 6 + xa, y + 3, xb - xa, 14, blend(th::white, accent(), 110));
     }
     if (password) {
-        for (int i = start; i < len && i < start + max_chars; i++) c.fill(x + 5 + (i - start) * FONT_W + 2, y + 7, 4, 4, th::text);
-    } else c.text_n(x + 5, y + 4, text + start, max_chars, th::text);
-    if (focused && (ticks() / 500) % 2 == 0) c.vline(x + 5 + (cur - start) * FONT_W, y + 3, 14, accent());
+        for (int i = start; i < len; i++) c.disc(x + 6 + (i - start) * 8 + 4, y + 10, 3, th::text);
+    } else c.text(x + 6, y + 4, text + start, th::text);
+    int cx = password ? (cur - start) * 8 : prefix_w(text + start, cur - start);
+    if (focused && (ticks() / 500) % 2 == 0) c.vline(x + 6 + cx, y + 3, 14, accent());
+    c.clip = oc;
 }
 
 // ---------------------------------------------------------------- dialogs
@@ -401,8 +422,8 @@ static void pick_draw(App* a, Dialog* d, Canvas& c, Rect r, int cw_, int ch_) {
         int y = lr.y + 2 + i * PICK_ROW;
         bool on = k == d->sel;
         bool hv = a->hot(lr.x + 2, y, lr.w - 14, PICK_ROW);
-        if (on) c.fill(lr.x + 2, y, lr.w - 14, PICK_ROW, blend(th::white, accent(), 150));
-        else if (hv) c.fill(lr.x + 2, y, lr.w - 14, PICK_ROW, blend(th::white, accent(), 50));
+        if (on) c.rrect(lr.x + 3, y, lr.w - 16, PICK_ROW, 4, blend(th::white, accent(), 90));
+        else if (hv) c.rrect(lr.x + 3, y, lr.w - 16, PICK_ROW, 4, blend(th::white, accent(), 36));
         FsNode* nd = rows[k].n;
         const char* ic = rows[k].up || nd->dir ? "folder" : (is_image_name(nd->name) ? "image_file" : "text_file");
         c.blit(icon(ic)->small, lr.x + 8, y + 2);
@@ -418,10 +439,9 @@ static void pick_draw(App* a, Dialog* d, Canvas& c, Rect r, int cw_, int ch_) {
     }
     c.set_clip({0, 0, cw_, ch_});
     if (n > vis) {
-        c.fill(lr.x + lr.w - 10, lr.y + 2, 8, lr.h - 4, th::panel_dk);
         int th_h = max(16, (lr.h - 4) * vis / n);
         int ty = lr.y + 2 + (lr.h - 4 - th_h) * d->scroll / max(1, n - vis);
-        c.fill(lr.x + lr.w - 10, ty, 8, th_h, accent());
+        c.rrect(lr.x + lr.w - 9, ty, 5, th_h, 2, th::muted, 150);
     }
     c.text(r.x + 14, r.y + r.h - 62, d->save ? "name" : "file", th::muted);
     d->field.draw(c, r.x + 56, r.y + r.h - 66, r.w - 70);
@@ -429,12 +449,12 @@ static void pick_draw(App* a, Dialog* d, Canvas& c, Rect r, int cw_, int ch_) {
 
 void dialog_draw(App* a, Canvas& c, int w, int h) {
     Dialog* d = a->dialog;
-    c.dither(0, 0, w, h, 0xFF2A2240);
+    c.fill_alpha(0, 0, w, h, 0xFF10131A, 110);
     Rect r = dialog_rect(d, w, h);
     if (d->kind == 3) {
-        c.dither(r.x + 4, r.y + 4, r.w, r.h, th::ink);
-        draw_bevel(c, r.x, r.y, r.w, r.h, th::paper);
-        c.fill(r.x + 2, r.y + 2, r.w - 4, 3, accent());
+        c.shadow(r.x, r.y + 3, r.w, r.h, 10, 12, 60);
+        c.rrect(r.x, r.y, r.w, r.h, 10, th::border);
+        c.rrect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 9, th::paper);
         pick_draw(a, d, c, r, w, h);
         for (int i = 0; i < d->nb; i++) {
             Rect b = dialog_button(d, r, i);
@@ -442,9 +462,9 @@ void dialog_draw(App* a, Canvas& c, int w, int h) {
         }
         return;
     }
-    c.dither(r.x + 4, r.y + 4, r.w, r.h, th::ink);
-    draw_bevel(c, r.x, r.y, r.w, r.h, th::paper);
-    c.fill(r.x + 2, r.y + 2, r.w - 4, 3, accent());
+    c.shadow(r.x, r.y + 3, r.w, r.h, 10, 12, 60);
+    c.rrect(r.x, r.y, r.w, r.h, 10, th::border);
+    c.rrect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 9, th::paper);
     c.blit(icon(d->kind == 2 ? "about" : "silicon")->mid, r.x + 12, r.y + 14);
     // word-wrap the message
     int tx = r.x + 52, maxc = (r.w - 64) / FONT_W, ty = r.y + 16;
@@ -607,13 +627,10 @@ void App::force_close() {
 static int thumb_h(int h, int total, int visible) { return max(18, h * visible / max(1, total)); }
 
 void ScrollBar::draw(Canvas& c, int x, int y, int h, int total, int visible, int offset) {
-    c.fill(x, y, 10, h, th::panel_dk);
-    c.vline(x, y, h, th::border);
     if (total <= visible) return;
     int th_h = thumb_h(h, total, visible);
     int ty = y + (h - th_h) * clamp(offset, 0, total - visible) / max(1, total - visible);
-    draw_bevel(c, x + 1, ty, 9, th_h, dragging ? blend(accent(), th::white, 60) : accent());
-    for (int k = -2; k <= 2; k += 2) c.hline(x + 3, ty + th_h / 2 + k, 5, blend(accent(), th::ink, 90));
+    c.rrect(x + 2, ty, dragging ? 7 : 6, th_h, 3, dragging ? th::muted : shade(th::muted, 110), dragging ? 230 : 150);
 }
 
 bool ScrollBar::handle(const MouseEv& e, int x, int y, int h, int total, int visible, int& offset) {

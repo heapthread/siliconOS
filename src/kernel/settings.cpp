@@ -4,8 +4,8 @@
 
 Settings settings;
 
-const u32 accent_colors[] = {0xFF9B7BFF, 0xFF4FD1C5, 0xFFFF7A9A, 0xFFFFB347, 0xFF7ED957, 0xFF5AA9FF};
-const char* accent_names[] = {"wafer violet", "etch teal", "solder pink", "copper", "trace green", "laser blue"};
+const u32 accent_colors[] = {0xFF3478F6, 0xFF1FA89A, 0xFFE0508A, 0xFFF08A1C, 0xFF34A853, 0xFF7C5CFA};
+const char* accent_names[] = {"blue", "teal", "pink", "orange", "green", "purple"};
 const int accent_count = ARRAY_LEN(accent_colors);
 
 u32 accent() { return accent_colors[clamp(settings.accent, 0, accent_count - 1)]; }
@@ -19,7 +19,7 @@ static void defaults() {
     settings.term_scale = 1;
     settings.clock24 = true;
     settings.show_seconds = false;
-    settings.dock_magnify = 1;
+    settings.dock_magnify = 0;
     settings.sounds = true;
     settings.show_fps = false;
     strlcpy(settings.shell, "bash", sizeof(settings.shell));
@@ -95,5 +95,5 @@ void settings_save() {
              settings.show_fps, settings.shell, settings.boot_target, settings.net_enabled, settings.fast_boot,
              settings.fps_limit, settings.res_w, settings.res_h, settings.greeter, settings.pass, settings.sleep_min,
              settings.saver_min, settings.dnd, settings.muted, settings.kbd_layout);
-    fs_write_text("/system/settings", b);
+    { FsRoot as_root; fs_write_text("/system/settings", b); }
 }

@@ -1,24 +1,31 @@
 
 silicon 0.1 booting
-memory: 511 MiB total, heap 700000..1ffe0000
+memory: 511 MiB total, heap 600000..1ffe0000
 framebuffer 1024x768 pitch 4096 @ f8000000
-tsc: 4200 MHz
-pci: 6 devices
+tsc: 4199 MHz
+pci: 8 devices
 display: 1024x768, monitor 165 Hz, resizable
 mouse: ps/2 relative, 4-byte packets
 ata: primary master, 131072 sectors (64 MiB)
-ata: bus master dma at io c100
-fs: loaded 26 nodes, 11493 bytes
+ata: bus master dma at io c620
+fs: slots hold generations 121 and 122, using slot 1
+fs: loaded 39 nodes, 3773751 bytes (generation 122, format 2)
 crypto selftest: sha256 ok, aes ok, x25519 ok
-pci: 6 devices
-rtl8139: io c000 irq 11 mac 52:54:0:12:34:56
-assets: 65 icons, 8 wallpapers
+pci: 8 devices
+rtl8139: io c400 irq 11 mac 52:54:0:12:34:56
+audio: AC97 nam c000 nabm c500, 32 buffers of 2048 frames
+usb: UHCI at io c600
+assets: 67 icons, 7 wallpapers
 edid: 1024x768 @ 165 Hz
 dhcp: 10.0.2.15 gw 10.0.2.2 dns 10.0.2.3
-fs: wrote 16 of 23 sectors
-fs: synced 11493 bytes (ok)
-tls: server hung up during the handshake
-fs: wrote 24 of 24 sectors
-fs: synced 11795 bytes (ok)
-fs: wrote 16 of 24 sectors
-fs: synced 11795 bytes (ok)
+vpn: tunnel up (peer index 11223344)
+fs: wrote 17 of 7371 sectors to slot 0
+fs: committed generation 123 (3773751 bytes, ok)
+fs: wrote 17 of 7371 sectors to slot 1
+fs: committed generation 124 (3773751 bytes, ok)
+fs: wrote 17 of 7371 sectors to slot 0
+fs: committed generation 125 (3773751 bytes, ok)
+fs: wrote 7626 of 7626 sectors to slot 1
+fs: committed generation 126 (3904127 bytes, ok)
+fs: wrote 7881 of 7881 sectors to slot 0
+fs: committed generation 127 (4034833 bytes, ok)

@@ -11,6 +11,10 @@
 #include "firmware.h"
 #include "display.h"
 #include "ui/lockscreen.h"
+#include "proc/proc.h"
+#include "drv/audio.h"
+#include "drv/blk.h"
+#include "fs/drives.h"
 
 extern "C" char __kernel_end[];
 u64 mem_total_bytes = 0;
@@ -23,7 +27,7 @@ static void memory_init(BootInfo* bi) {
         if (e.type != 1) continue;
         mem_total_bytes += e.length;
         u64 s = e.base, en = e.base + e.length;
-        if (en > 0xFFFFFFFFull) en = 0xFFFFFFFFull;    // identity mapped range only
+        if (en > 0x40000000ull) en = 0x40000000ull;    // the heap stays below 1 GiB: user programs own 1-2 GiB
         if (s < kend) s = kend;
         if (en > s && en - s > best_end - best_start) { best_start = s; best_end = en; }
     }
@@ -164,6 +168,11 @@ static void terminal_loop() {
         display_poll();
         shell.tick();
         fs_tick();
+        proc_slice(3);
+        audio_poll();
+        usb_poll();
+        drives_poll();
+        drives_tick();
         if (want_ui) {
             want_ui = false;
             fs_sync();
@@ -178,7 +187,7 @@ static void terminal_loop() {
             draw_terminal();
             last_draw = ticks();
         }
-        if (shell.busy() || net_busy()) cpu_rest();
+        if (shell.busy() || net_busy() || proc_busy()) cpu_rest();
         else cpu_idle();
     }
 }
@@ -189,6 +198,7 @@ extern "C" void kmain(BootInfo* bi) {
     gdt_init();
     idt_init();
     memory_init(bi);
+    proc_init();
     fb_init(bi);
     klog("framebuffer %ux%u pitch %u @ %lx\n", bi->fb_width, bi->fb_height, bi->fb_pitch, bi->fb_addr);
     pit_init(1000);
@@ -199,11 +209,14 @@ extern "C" void kmain(BootInfo* bi) {
     mouse_init(fb.width, fb.height);
     fs_init();
     settings_load();
+    fs_uid = FS_UID_USER;                       // from here on the shell, the apps and user programs are the signed-in user
     display_refresh_from_settings();
     int boot_target = firmware_boot();          // POST, setup (DEL/F2), boot menu (F12)
     splash("waking up the silicon", 30);
     splash("bringing up the network", 50);
     net_init();
+    audio_init();
+    usb_init();
     splash("unpacking pixels", 60);
     ui_preload();
     for (int pct = 60; pct <= 100; pct += settings.fast_boot ? 20 : 4) {     // let the chip finish warming up

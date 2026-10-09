@@ -5,6 +5,8 @@
 struct Sock {
     int  state;
     ip4  rip;
+    bool v6;
+    u8   rip6[16];
     u16  rport, lport;
     u32  iss, snd_una, snd_wnd, rcv_nxt;
     u16  mss;
@@ -45,9 +47,16 @@ static void send_seg(Sock& s, u32 seq, u8 flags, const u8* data, u32 len) {
     pkt[18] = pkt[19] = 0;
     if (hl == 24) { pkt[20] = 2; pkt[21] = 4; pkt[22] = 1460 >> 8; pkt[23] = 1460 & 0xFF; }
     if (len) memcpy(pkt + hl, data, len);
+    if (s.v6) {
+        u16 c6 = ip6_checksum(ip6_source_for(s.rip6), s.rip6, 6, pkt, hl + len);
+        pkt[16] = c6 >> 8; pkt[17] = c6 & 0xFF;
+        ip6_send(s.rip6, 6, pkt, hl + len);
+        return;
+    }
     // checksum over the pseudo header + segment
     u8 ph[12];
-    memcpy(ph, &netcfg.ip, 4);
+    ip4 my_ip = ip_src_for(s.rip);
+    memcpy(ph, &my_ip, 4);
     memcpy(ph + 4, &s.rip, 4);
     ph[8] = 0; ph[9] = 6;
     ph[10] = (hl + len) >> 8; ph[11] = (hl + len) & 0xFF;
@@ -105,6 +114,18 @@ int tcp_connect(ip4 dst, u16 port) {
     s.tx = (u8*)kmalloc(s.tx_cap);
     s.rto = 700;
     s.state = TCP_SYN_SENT;
+    if (dst) { send_seg(s, s.iss, 0x02, nullptr, 0); arm(s); }
+    return id;
+}
+
+int tcp_connect6(const u8* dst, u16 port) {
+    if (!ip6cfg.ready) return -1;
+    int id = tcp_connect(0, port);          // sets everything up, but its SYN went nowhere: redo it as v6
+    if (id < 0) return -1;
+    Sock& s = socks[id];
+    s.v6 = true;
+    memcpy(s.rip6, dst, 16);
+    s.mss = 1220;
     send_seg(s, s.iss, 0x02, nullptr, 0);
     arm(s);
     return id;
@@ -169,7 +190,11 @@ void tcp_abort(int id) {
     s.state = TCP_FREE;
 }
 
-void tcp_receive(ip4 src, ip4, const u8* d, u32 len) {
+static void tcp_input(bool v6, const u8* src6, ip4 src, const u8* d, u32 len);
+void tcp_receive(ip4 src, ip4, const u8* d, u32 len) { tcp_input(false, nullptr, src, d, len); }
+void tcp_receive6(const u8* src, const u8* d, u32 len) { tcp_input(true, src, 0, d, len); }
+
+static void tcp_input(bool v6, const u8* src6, ip4 src, const u8* d, u32 len) {
     if (len < 20) return;
     u16 sport = (d[0] << 8) | d[1], dport = (d[2] << 8) | d[3];
     u32 seq, ack;
@@ -183,7 +208,7 @@ void tcp_receive(ip4 src, ip4, const u8* d, u32 len) {
     if (hl < 20 || hl > len) return;
     Sock* sp = nullptr;
     for (auto& s : socks)
-        if (s.state != TCP_FREE && s.rip == src && s.rport == sport && s.lport == dport) { sp = &s; break; }
+        if (s.state != TCP_FREE && s.v6 == v6 && (v6 ? !memcmp(s.rip6, src6, 16) : s.rip == src) && s.rport == sport && s.lport == dport) { sp = &s; break; }
     if (!sp) return;
     Sock& s = *sp;
     const u8* payload = d + hl;
@@ -206,7 +231,7 @@ void tcp_receive(ip4 src, ip4, const u8* d, u32 len) {
                 if (kind == 0) break;
                 if (kind == 1) { o++; continue; }
                 u8 l = d[o + 1];
-                if (kind == 2 && l == 4) s.mss = (u16)min(1460, (d[o + 2] << 8) | d[o + 3]);
+                if (kind == 2 && l == 4) s.mss = (u16)min(v6 ? 1220 : 1460, (d[o + 2] << 8) | d[o + 3]);
                 if (l < 2) break;
                 o += l;
             }

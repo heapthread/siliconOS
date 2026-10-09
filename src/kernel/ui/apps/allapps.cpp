@@ -42,7 +42,7 @@ struct AppsApp : App {
         for (int c = 0; c < NCAT; c++)
             for (int i = 0; i < app_info_count; i++) {
                 const AppInfo& a = app_infos[i];
-                if (category(a.id) != c) continue;
+                if (!strcmp(a.id, "module") || category(a.id) != c) continue;
                 if (search.len && !str_icontains(a.name, search.text) && !str_icontains(a.desc, search.text) && !str_icontains(a.id, search.text)) continue;
                 shown.push({&a, c});
             }

@@ -634,7 +634,15 @@ void Shell::tick() {
             if (!prog_keep_screen) con->clear();
             prog_keep_screen = false;
             con->cursor_visible = true;
-            prompt();
+            if (after_cmd) {
+                char* line_ = after_cmd;
+                after_cmd = nullptr;
+                if (after_root) { FsRoot as_root; run_line(line_); }
+                else run_line(line_);
+                after_root = false;
+                kfree(line_);
+            }
+            if (!prog) prompt();
         }
     }
 }

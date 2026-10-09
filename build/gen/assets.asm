@@ -3,85 +3,101 @@ section .rdata
 global asset_table
 global asset_count
 align 8
-asset_count: dq 77
+asset_count: dq 93
 asset_table:
-    dq name0, data0, 2151
-    dq name1, data1, 1497
-    dq name2, data2, 2950
-    dq name3, data3, 2167
-    dq name4, data4, 2191
-    dq name5, data5, 4496
-    dq name6, data6, 1336
-    dq name7, data7, 1773
-    dq name8, data8, 2164
-    dq name9, data9, 3560
-    dq name10, data10, 1761
-    dq name11, data11, 1597
-    dq name12, data12, 1889
-    dq name13, data13, 880
-    dq name14, data14, 950
-    dq name15, data15, 934
-    dq name16, data16, 1584
-    dq name17, data17, 1262
-    dq name18, data18, 1506
-    dq name19, data19, 934
-    dq name20, data20, 1326
-    dq name21, data21, 734
-    dq name22, data22, 1002
-    dq name23, data23, 924
-    dq name24, data24, 810
-    dq name25, data25, 646
-    dq name26, data26, 907
-    dq name27, data27, 1356
-    dq name28, data28, 1162
-    dq name29, data29, 922
-    dq name30, data30, 816
-    dq name31, data31, 850
-    dq name32, data32, 1444
-    dq name33, data33, 820
-    dq name34, data34, 914
-    dq name35, data35, 760
-    dq name36, data36, 992
-    dq name37, data37, 898
-    dq name38, data38, 870
-    dq name39, data39, 596
-    dq name40, data40, 794
-    dq name41, data41, 742
-    dq name42, data42, 922
-    dq name43, data43, 528
-    dq name44, data44, 972
-    dq name45, data45, 898
-    dq name46, data46, 606
-    dq name47, data47, 878
-    dq name48, data48, 862
-    dq name49, data49, 1048
-    dq name50, data50, 842
-    dq name51, data51, 1258
-    dq name52, data52, 964
-    dq name53, data53, 1156
-    dq name54, data54, 910
-    dq name55, data55, 738
-    dq name56, data56, 790
-    dq name57, data57, 700
-    dq name58, data58, 1038
-    dq name59, data59, 674
-    dq name60, data60, 1182
-    dq name61, data61, 660
-    dq name62, data62, 718
-    dq name63, data63, 806
-    dq name64, data64, 914
-    dq name65, data65, 55072
-    dq name66, data66, 21724
-    dq name67, data67, 26496
-    dq name68, data68, 520388
-    dq name69, data69, 638793
-    dq name70, data70, 394562
-    dq name71, data71, 394407
-    dq name72, data72, 599722
-    dq name73, data73, 39548
-    dq name74, data74, 757076
-    dq name75, data75, 705684
-    dq name76, data76, 3600
+    dq name0, data0, 3287
+    dq name1, data1, 3083
+    dq name2, data2, 3875
+    dq name3, data3, 4082
+    dq name4, data4, 3391
+    dq name5, data5, 3725
+    dq name6, data6, 2941
+    dq name7, data7, 3777
+    dq name8, data8, 4812
+    dq name9, data9, 4057
+    dq name10, data10, 4440
+    dq name11, data11, 4156
+    dq name12, data12, 4416
+    dq name13, data13, 1746
+    dq name14, data14, 1862
+    dq name15, data15, 1280
+    dq name16, data16, 1640
+    dq name17, data17, 4149
+    dq name18, data18, 4149
+    dq name19, data19, 4612
+    dq name20, data20, 4752
+    dq name21, data21, 4714
+    dq name22, data22, 4127
+    dq name23, data23, 4082
+    dq name24, data24, 2243
+    dq name25, data25, 1471
+    dq name26, data26, 4881
+    dq name27, data27, 3637
+    dq name28, data28, 3702
+    dq name29, data29, 3508
+    dq name30, data30, 4464
+    dq name31, data31, 3717
+    dq name32, data32, 3298
+    dq name33, data33, 3806
+    dq name34, data34, 4029
+    dq name35, data35, 3821
+    dq name36, data36, 3754
+    dq name37, data37, 3324
+    dq name38, data38, 4062
+    dq name39, data39, 3019
+    dq name40, data40, 3491
+    dq name41, data41, 5046
+    dq name42, data42, 4107
+    dq name43, data43, 4823
+    dq name44, data44, 2892
+    dq name45, data45, 5094
+    dq name46, data46, 3681
+    dq name47, data47, 3529
+    dq name48, data48, 4162
+    dq name49, data49, 4223
+    dq name50, data50, 3995
+    dq name51, data51, 4039
+    dq name52, data52, 3886
+    dq name53, data53, 4517
+    dq name54, data54, 4174
+    dq name55, data55, 4050
+    dq name56, data56, 3416
+    dq name57, data57, 3987
+    dq name58, data58, 4220
+    dq name59, data59, 3549
+    dq name60, data60, 4029
+    dq name61, data61, 3202
+    dq name62, data62, 3325
+    dq name63, data63, 3722
+    dq name64, data64, 4029
+    dq name65, data65, 78629
+    dq name66, data66, 46065
+    dq name67, data67, 57475
+    dq name68, data68, 43980
+    dq name69, data69, 27245
+    dq name70, data70, 18302
+    dq name71, data71, 39721
+    dq name72, data72, 962
+    dq name73, data73, 1129
+    dq name74, data74, 598
+    dq name75, data75, 683
+    dq name76, data76, 1140
+    dq name77, data77, 1043
+    dq name78, data78, 746
+    dq name79, data79, 734
+    dq name80, data80, 877
+    dq name81, data81, 1158
+    dq name82, data82, 4201
+    dq name83, data83, 3663
+    dq name84, data84, 39548
+    dq name85, data85, 757076
+    dq name86, data86, 705684
+    dq name87, data87, 340712
+    dq name88, data88, 331992
+    dq name89, data89, 3600
+    dq name90, data90, 3456
+    dq name91, data91, 4352
+    dq name92, data92, 3904
 name0: db "icon/terminal", 0
 align 8
 data0: incbin "sil/a00.sil"
@@ -277,39 +293,87 @@ data63: incbin "sil/a63.sil"
 name64: db "icon/module", 0
 align 8
 data64: incbin "sil/a64.sil"
-name65: db "wall/wafer", 0
+name65: db "wall/aurora", 0
 align 8
 data65: incbin "sil/a65.sil"
-name66: db "wall/circuit dusk", 0
+name66: db "wall/daybreak", 0
 align 8
 data66: incbin "sil/a66.sil"
-name67: db "wall/silicon valley", 0
+name67: db "wall/lagoon", 0
 align 8
 data67: incbin "sil/a67.sil"
-name68: db "wall/sunset mountains", 0
+name68: db "wall/graphite", 0
 align 8
 data68: incbin "sil/a68.sil"
-name69: db "wall/night hills", 0
+name69: db "wall/meadow", 0
 align 8
 data69: incbin "sil/a69.sil"
-name70: db "wall/starry night", 0
+name70: db "wall/dusk", 0
 align 8
 data70: incbin "sil/a70.sil"
-name71: db "wall/distant city", 0
+name71: db "wall/orchid", 0
 align 8
 data71: incbin "sil/a71.sil"
-name72: db "wall/foggy valley", 0
+name72: db "cursor/arrow", 0
 align 8
 data72: incbin "sil/a72.sil"
-name73: db "emoji/sheet", 0
+name73: db "cursor/hand", 0
 align 8
 data73: incbin "sil/a73.sil"
-name74: db "font/DejaVuSans", 0
+name74: db "cursor/ibeam", 0
 align 8
 data74: incbin "sil/a74.sil"
-name75: db "font/DejaVuSans-Bold", 0
+name75: db "cursor/cross", 0
 align 8
 data75: incbin "sil/a75.sil"
-name76: db "sapp/hello", 0
+name76: db "cursor/move", 0
 align 8
 data76: incbin "sil/a76.sil"
+name77: db "cursor/resize", 0
+align 8
+data77: incbin "sil/a77.sil"
+name78: db "cursor/resize_h", 0
+align 8
+data78: incbin "sil/a78.sil"
+name79: db "cursor/resize_v", 0
+align 8
+data79: incbin "sil/a79.sil"
+name80: db "cursor/resize2", 0
+align 8
+data80: incbin "sil/a80.sil"
+name81: db "cursor/wait", 0
+align 8
+data81: incbin "sil/a81.sil"
+name82: db "icon/media", 0
+align 8
+data82: incbin "sil/a82.sil"
+name83: db "icon/vpn", 0
+align 8
+data83: incbin "sil/a83.sil"
+name84: db "emoji/sheet", 0
+align 8
+data84: incbin "sil/a84.sil"
+name85: db "font/DejaVuSans", 0
+align 8
+data85: incbin "sil/a85.sil"
+name86: db "font/DejaVuSans-Bold", 0
+align 8
+data86: incbin "sil/a86.sil"
+name87: db "font/DejaVuSansMono", 0
+align 8
+data87: incbin "sil/a87.sil"
+name88: db "font/DejaVuSansMono-Bold", 0
+align 8
+data88: incbin "sil/a88.sil"
+name89: db "sapp/hello", 0
+align 8
+data89: incbin "sil/a89.sil"
+name90: db "uapp/guard", 0
+align 8
+data90: incbin "sil/a90.sil"
+name91: db "uapp/hello", 0
+align 8
+data91: incbin "sil/a91.sil"
+name92: db "uapp/threads", 0
+align 8
+data92: incbin "sil/a92.sil"

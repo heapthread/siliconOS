@@ -1177,7 +1177,7 @@ struct SlateApp : App {
             if (numbers) {
                 char num[12];
                 snprintf(num, sizeof(num), "%d", li + 1);
-                c.text(gx - 10 - (int)strlen(num) * 8, y + scale - 1, num, li == dc->row ? accent() : c_gutter_text(), 1, li == dc->row);
+                c.text_mono(gx - 10 - (int)strlen(num) * 8, y + scale - 1, num, li == dc->row ? accent() : c_gutter_text(), 1, li == dc->row);
             }
             draw_line(c, dc, li, y, w, mr, mc, br, bc);
         }

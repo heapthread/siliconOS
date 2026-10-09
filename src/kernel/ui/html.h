@@ -7,7 +7,7 @@ enum HtmlKind { HK_TEXT, HK_RECT, HK_IMAGE, HK_FIELD, HK_BUTTON, HK_BULLET, HK_C
 struct HtmlItem {
     u8   kind;
     u8   scale;
-    bool bold, underline, strike;
+    bool bold, underline, strike, mono;
     int  x, y, w, h;
     u32  color, bg;            // bg 0 = none
     int  link;                 // index into links or -1
@@ -54,6 +54,10 @@ struct HtmlDoc {
     void  clear();
     const char* str(const HtmlItem& it) const { return pool + it.text; }
 };
+
+// text metrics shared with the browser (proportional, or 8 px cells for code)
+int html_text_w(const char* s, int n, int scale, bool bold, bool mono);
+int html_caret_at(const char* s, int n, int scale, bool bold, bool mono, int rel_x);    // character index nearest to rel_x
 
 // keep: field values typed by the user survive a re-layout (same order of fields)
 void html_free_css(HtmlDoc& doc);

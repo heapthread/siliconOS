@@ -1,5 +1,6 @@
 // silicon - Files: browse SiliconFS
 #include "apps.h"
+#include "../../fs/drives.h"
 
 enum {
     F_OPEN = 1, F_RENAME, F_TRASH, F_DUP, F_NEW_FOLDER, F_NEW_FILE, F_CLOSE, F_VIEW_ICONS, F_VIEW_LIST,
@@ -17,13 +18,7 @@ static const Place places[] = {
     {"Games", "/home/games", "folder"}, {"System", "/system", "folder"}, {"Disk", "/", "disk"}, {"Trash", "/trash", "trash"},
 };
 
-static const char* node_icon(FsNode* n) {
-    if (n->dir) return n->children.len ? "folder_full" : "folder";
-    if (str_icontains(n->name, ".pix") || is_image_name(n->name)) return "image_file";
-    if (str_icontains(n->name, ".htm")) return "browser";
-    if (str_icontains(n->name, ".txt") || str_icontains(n->name, ".md")) return "text_file";
-    return "file";
-}
+static const char* node_icon(FsNode* n) { return file_icon_name(n->name, n->dir, n->children.len > 0); }
 
 struct FilesApp : App {
     char path[256] = "/home";
@@ -218,6 +213,13 @@ struct FilesApp : App {
         for (int i = 0; i < d->children.len; i++) if (item_rect(i).contains(x, y)) return i;
         return -1;
     }
+    // drives plugged in: rows below the places; the right edge of a row ejects it
+    int dev_y(int i) { return TOOLBAR_H + 26 + ARRAY_LEN(places) * 24 + 26 + i * 24; }
+    int dev_hit(int x, int y, bool* eject) {
+        for (int i = 0; i < drives_count(); i++)
+            if (Rect{6, dev_y(i), SIDEBAR_W - 12, 22}.contains(x, y)) { *eject = x >= SIDEBAR_W - 30; return i; }
+        return -1;
+    }
     int place_hit(int x, int y) {
         for (int i = 0; i < ARRAY_LEN(places); i++)
             if (Rect{6, TOOLBAR_H + 26 + i * 24, SIDEBAR_W - 12, 22}.contains(x, y)) return i;
@@ -253,6 +255,27 @@ struct FilesApp : App {
             else if (hot(6, y, SIDEBAR_W - 12, 22)) c.fill(6, y, SIDEBAR_W - 12, 22, blend(th::panel_dk, accent(), 60));
             c.blit(icon(places[i].icon)->small, 12, y + 3);
             c.text(34, y + 5, places[i].label, cur ? th::white : th::text, 1, cur);
+        }
+        if (drives_count()) {
+            c.text(12, TOOLBAR_H + 26 + ARRAY_LEN(places) * 24 + 8, "DEVICES", th::muted, 1, true);
+            for (int i = 0; i < drives_count(); i++) {
+                DriveInfo di;
+                if (!drives_info(i, &di)) continue;
+                int y = dev_y(i);
+                bool cur = !strncmp(path, di.path, strlen(di.path)) && strlen(di.path) > 4;
+                if (cur) c.rrect(6, y, SIDEBAR_W - 12, 22, 5, accent());
+                else if (hot(6, y, SIDEBAR_W - 12, 22)) c.rrect(6, y, SIDEBAR_W - 12, 22, 5, th::white, 120);
+                c.blit(icon("storage")->small, 12, y + 3);
+                char nm[11];
+                strlcpy(nm, di.label, sizeof(nm));
+                c.text(34, y + 5, nm, cur ? th::white : th::text, 1, cur);
+                // eject: a triangle over a bar
+                bool he = hot(SIDEBAR_W - 30, y, 22, 22);
+                u32 gc = cur ? th::white : th::muted;
+                if (he) c.rrect(SIDEBAR_W - 28, y + 2, 18, 18, 5, th::white, cur ? 70 : 160);
+                for (int k = 0; k < 6; k++) c.hline(SIDEBAR_W - 19 - k, y + 6 + k, 2 * k + 1, gc);
+                c.rrect(SIDEBAR_W - 25, y + 14, 12, 2, 1, gc);
+            }
         }
         // disk usage gauge
         if (fs_persistent()) {
@@ -486,7 +509,15 @@ struct FilesApp : App {
                 else if (Rect{38, 6, 26, 22}.contains(e.x, e.y)) go_up();
                 else if (Rect{cw - 108, 6, 66, 22}.contains(e.x, e.y)) on_command(F_NEW_FOLDER);
                 else if (Rect{cw - 36, 6, 28, 22}.contains(e.x, e.y)) on_command(list_view ? F_VIEW_ICONS : F_VIEW_LIST);
-                else { int p = place_hit(e.x, e.y); if (p >= 0) go(places[p].path); }
+                else {
+                    bool ej = false;
+                    int dv = dev_hit(e.x, e.y, &ej);
+                    DriveInfo di;
+                    if (dv >= 0 && drives_info(dv, &di)) {
+                        if (ej) { char msg[96]; if (!drive_eject(di.device, msg, sizeof(msg))) info(msg); if (!strncmp(path, di.path, strlen(di.path))) go("/home"); }
+                        else go(di.path);
+                    } else { int p = place_hit(e.x, e.y); if (p >= 0) go(places[p].path); }
+                }
             } else if (e.button == 2) {
                 int i = hit(e.x, e.y);
                 Menu m;

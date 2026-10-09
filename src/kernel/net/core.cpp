@@ -72,6 +72,8 @@ static bool eth_send(const u8 dst[6], u16 type, const void* payload, u32 len) {
     return rtl8139_send(frame, sizeof(EthHdr) + len);
 }
 
+bool net_eth_send(const u8 dst[6], u16 type, const void* payload, u32 len) { return eth_send(dst, type, payload, len); }
+
 // ================================================================ ARP
 struct ArpEntry { ip4 ip; u8 mac[6]; u64 t; bool valid; };
 static ArpEntry arp_cache[32];
@@ -136,12 +138,16 @@ static void arp_tick() {
 // ================================================================ IPv4
 static u16 ip_id = 1;
 
+ip4 ip_src_for(ip4 dst) { return vpn_routes(dst) ? vpn_address() : netcfg.ip; }
+
 bool ip_send(ip4 dst, u8 proto, const void* payload, u32 len) {
     if (!netcfg.up || len > 1480) return false;
     {
         u16 dport = ((proto == 6 || proto == 17) && len >= 4) ? (u16)((((const u8*)payload)[2] << 8) | ((const u8*)payload)[3]) : 0;
         if (!fw_check(false, proto, dst, dport)) return false;
     }
+    bool tunnel = vpn_routes(dst);
+    if (tunnel && len > 1400) return false;                // leave room for the tunnel's own headers
     u8 pkt[1520];
     IpHdr* h = (IpHdr*)pkt;
     h->vihl = 0x45;
@@ -152,11 +158,12 @@ bool ip_send(ip4 dst, u8 proto, const void* payload, u32 len) {
     h->ttl = 64;
     h->proto = proto;
     h->csum = 0;
-    h->src = netcfg.ip;
+    h->src = tunnel ? vpn_address() : netcfg.ip;
     h->dst = dst;
     h->csum = ip_checksum(h, 20);
     memcpy(pkt + 20, payload, len);
     u32 total = 20 + len;
+    if (tunnel) return vpn_send_ip(pkt, total);
     if (dst == 0xFFFFFFFF) return eth_send(BCAST, 0x0800, pkt, total);
     ip4 hop = ((dst & netcfg.mask) == (netcfg.ip & netcfg.mask)) ? dst : netcfg.gateway;
     ArpEntry* e = arp_lookup(hop);
@@ -246,6 +253,26 @@ static void udp_receive(const IpHdr* ih, const u8* d, u32 len) {
 }
 
 // ================================================================ frames in
+// an IPv4 packet that came out of the VPN tunnel
+void ip_deliver_inner(const u8* d, u32 len) {
+    if (len < 20) return;
+    const IpHdr* ih = (const IpHdr*)d;
+    if ((ih->vihl >> 4) != 4) return;
+    u32 ihl = (ih->vihl & 0x0F) * 4;
+    u32 tot = ntohs(ih->len);
+    if (tot > len || tot < ihl || ih->dst != vpn_address()) return;
+    if (ntohs(ih->frag) & 0x3FFF) return;
+    const u8* payload = d + ihl;
+    u32 plen = tot - ihl;
+    u16 dport = ((ih->proto == 6 || ih->proto == 17) && plen >= 4) ? (u16)((payload[2] << 8) | payload[3]) : 0;
+    if (!fw_check(true, ih->proto, ih->src, dport)) return;
+    switch (ih->proto) {
+    case 1: icmp_receive(ih, payload, plen); break;
+    case 17: udp_receive(ih, payload, plen); break;
+    case 6: tcp_receive(ih->src, ih->dst, payload, plen); break;
+    }
+}
+
 void net_receive_frame(const u8* f, u32 len) {
     if (len < sizeof(EthHdr)) return;
     const EthHdr* e = (const EthHdr*)f;
@@ -253,6 +280,7 @@ void net_receive_frame(const u8* f, u32 len) {
     const u8* d = f + sizeof(EthHdr);
     len -= sizeof(EthHdr);
     if (type == 0x0806) { arp_receive(d, len); return; }
+    if (type == 0x86DD) { ip6_receive(d, len, e->src); return; }
     if (type != 0x0800 || len < 20) return;
     const IpHdr* ih = (const IpHdr*)d;
     if ((ih->vihl >> 4) != 4) return;
@@ -389,7 +417,9 @@ void net_init() {
     if (!rtl8139_init(netcfg.mac)) { klog("net: no supported network card\n"); return; }
     netcfg.up = true;
     udp_bind(68, dhcp_receive);
+    ip6_init();
     net_dhcp_start();
+    vpn_init();
 }
 
 void net_poll() {
@@ -398,6 +428,8 @@ void net_poll() {
     arp_tick();
     dhcp_tick();
     dns_tick();
+    ip6_tick();
+    vpn_tick();
     tcp_tick();
 }
 

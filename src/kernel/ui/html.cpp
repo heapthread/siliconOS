@@ -4,8 +4,34 @@
 #include "css.h"
 #include "../net/net.h"
 #include "../text.h"
+#include "../gfx/gfx.h"
 
 static const int LINE_H = 16;          // per text scale
+
+int html_text_w(const char* s, int n, int scale, bool bold, bool mono) {
+    if (mono) return n * FONT_W * scale;
+    int total = 0;
+    char tmp[200];
+    while (n > 0) {
+        int k = min(n, 199);
+        memcpy(tmp, s, k);
+        tmp[k] = 0;
+        total += text_width(tmp, scale, bold);
+        s += k;
+        n -= k;
+    }
+    return total;
+}
+
+int html_caret_at(const char* s, int n, int scale, bool bold, bool mono, int rel_x) {
+    int prev = 0;
+    for (int i = 1; i <= n; i++) {
+        int w = html_text_w(s, i, scale, bold, mono);
+        if (rel_x < (prev + w) / 2) return i - 1;
+        prev = w;
+    }
+    return n;
+}
 static const int MARGIN = 14;
 
 void HtmlDoc::clear() {
@@ -314,6 +340,7 @@ struct Layout {
         it.color = top().color;
         it.scale = top().scale;
         it.bold = top().bold;
+        it.mono = top().mono;
         it.underline = top().underline;
         it.strike = top().strike;
         it.link = top().link;
@@ -324,9 +351,16 @@ struct Layout {
         return d.items.back();
     }
 
+    int run_w(const char* w, int n) { return html_text_w(w, n, top().scale, top().bold, top().mono); }
+    int fit_chars(const char* w, int n, int avail) {
+        int fit = 1;
+        while (fit < n && run_w(w, fit + 1) <= avail) fit++;
+        return fit;
+    }
+
     void word(const char* w, int n) {
-        int cw = 8 * top().scale;
-        int ww = n * cw;
+        int cw = run_w(" ", 1);
+        int ww = run_w(w, n);
         if (space_pending && x > left()) {
             if (x + cw + ww > right()) finish_line();
             else x += cw;
@@ -334,14 +368,14 @@ struct Layout {
         space_pending = false;
         // a very long word wraps hard
         while (ww > right() - left() && n > 0) {
-            int fit = max(1, (right() - x) / cw);
-            if (x > left() && fit < 4) { finish_line(); fit = max(1, (right() - x) / cw); }
-            HtmlItem& it = add(HK_TEXT, fit * cw, LINE_H * top().scale - 4 * top().scale + 2);
+            int fit = fit_chars(w, n, right() - x);
+            if (x > left() && fit < 4) { finish_line(); fit = fit_chars(w, n, right() - x); }
+            HtmlItem& it = add(HK_TEXT, run_w(w, min(fit, n)), LINE_H * top().scale - 4 * top().scale + 2);
             it.text = pool_add(w, min(fit, n));
             it.tlen = min(fit, n);
             w += fit; n -= fit;
             finish_line();
-            ww = n * cw;
+            ww = run_w(w, n);
         }
         if (n <= 0) return;
         if (x + ww > right() && x > left()) finish_line();
@@ -389,7 +423,7 @@ struct Layout {
             for (int i = 0; i <= n; i++) {
                 if (i == n || buf[i] == '\n') {
                     if (i > s) {
-                        HtmlItem& it = add(HK_TEXT, (i - s) * 8 * top().scale, 12 * top().scale);
+                        HtmlItem& it = add(HK_TEXT, run_w(buf + s, i - s), 12 * top().scale);
                         it.text = pool_add(buf + s, i - s);
                         it.tlen = i - s;
                         x += it.w;
@@ -561,8 +595,9 @@ struct Layout {
             if (nlists && lists[nlists - 1].ordered) {
                 char num[8];
                 snprintf(num, sizeof(num), "%d.", ++lists[nlists - 1].n);
-                x = left() - 8 * (int)strlen(num) - 6;
-                HtmlItem& it = add(HK_TEXT, 8 * (int)strlen(num), 12);
+                int nw = html_text_w(num, (int)strlen(num), 1, false, false);
+                x = left() - nw - 8;
+                HtmlItem& it = add(HK_TEXT, nw, 12);
                 it.text = pool_add(num, (int)strlen(num));
                 it.tlen = (int)strlen(num);
                 it.link = -1;
@@ -748,7 +783,7 @@ struct Layout {
             if (!strcmp(t, "submit") || !strcmp(t, "button") || !strcmp(t, "reset") || !strcmp(t, "image")) {
                 const char* label = f.value[0] ? f.value : (is("button") ? "" : "Submit");
                 if (is("button") && !label[0]) label = "OK";
-                int w = (int)strlen(label) * 8 + 20;
+                int w = html_text_w(label, (int)strlen(label), 1, true, false) + 26;
                 if (x + w > right() && x > left()) finish_line();
                 HtmlItem& it = add(HK_BUTTON, w, 22);
                 it.field = fi;

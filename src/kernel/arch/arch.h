@@ -12,6 +12,10 @@ struct __attribute__((packed)) IntFrame {
 typedef void (*IrqHandler)(IntFrame*);
 
 void gdt_init();
+void tss_set_rsp0(u64 rsp0);
+extern "C" u64 read_cr3();
+extern "C" void write_cr3(u64 cr3);
+extern "C" void fx_default_state(void* area);   // 512 bytes, 16-aligned
 void idt_init();
 void irq_set_handler(int irq, IrqHandler h);
 void irq_unmask(int irq);

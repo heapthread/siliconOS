@@ -1,0 +1,38 @@
+/* silicon user program linker script (build_uapp.py fills in @BASE@) */
+ENTRY(_start)
+
+SECTIONS
+{
+    . = @BASE@;
+
+    .text : {
+        *(.text)
+        *(SORT(.text$*))
+        *(.text.*)
+    }
+
+    .rdata : {
+        *(.rdata)
+        *(SORT(.rdata$*))
+        *(.rodata)
+        *(.rodata.*)
+    }
+
+    .data : {
+        __ctors_start = .;
+        *(.ctors)
+        *(SORT(.ctors.*))
+        __ctors_end = .;
+        *(.data)
+        *(SORT(.data$*))
+        *(.bss)
+        *(SORT(.bss$*))
+        *(COMMON)
+        . = ALIGN(16);
+    }
+
+    /DISCARD/ : {
+        *(.pdata) *(.xdata) *(.edata) *(.idata*) *(.reloc)
+        *(.debug*) *(.comment) *(.drectve) *(.note*) *(.eh_frame)
+    }
+}

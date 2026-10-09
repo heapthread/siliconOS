@@ -3,10 +3,11 @@
 #include "../../net/net.h"
 
 struct FirewallApp : App {
-    int tab = 0;                                  // 0 rules, 1 log, 2 proxy
+    int tab = 0;                                  // 0 rules, 1 log, 2 proxy, 3 vpn
     bool n_allow = false;                         // the new rule: action, direction, protocol
     int n_dir = 2, n_proto = 0;
-    TextField port, addr, proxy;
+    TextField port, addr, proxy, vhost, vkey, vaddr;
+    int vfocus = 0;
     int focus = 0;                                // which text field has the keys: 0 port, 1 address, 2 proxy
     Smooth sc;
     int cw = 0, ch = 0;
@@ -20,6 +21,9 @@ struct FirewallApp : App {
         u16 pp;
         if (net_proxy_get(host, sizeof(host), &pp)) { char b[160]; snprintf(b, sizeof(b), "%s:%u", host, pp); proxy.set(b); }
         else proxy.set("");
+        char h[100], k[48], a[16], al[100];
+        vpn_current(h, k, a, al);
+        vhost.set(h); vkey.set(k); vaddr.set(a[0] ? a : "10.7.0.2");
     }
     const char* app_id() override { return "firewall"; }
     const char* title() override { return "Firewall"; }
@@ -84,12 +88,13 @@ struct FirewallApp : App {
         snprintf(b, sizeof(b), "%s", fw_enabled ? "firewall is on" : "firewall is OFF");
         c.text(34, 13, b, fw_enabled ? th::green : th::red, 1, true);
         draw_button(c, w - 96, 7, 86, 24, fw_enabled ? "Turn off" : "Turn on", hot(w - 96, 7, 86, 24), !fw_enabled);
-        static const char* names[3] = {"Rules", "Log", "Proxy"};
-        for (int i = 0; i < 3; i++) draw_button(c, 10 + i * 78, BAR + 4, 74, 22, names[i], hot(10 + i * 78, BAR + 4, 74, 22), tab == i);
+        static const char* names[4] = {"Rules", "Log", "Proxy", "VPN"};
+        for (int i = 0; i < 4; i++) draw_button(c, 10 + i * 78, BAR + 4, 74, 22, names[i], hot(10 + i * 78, BAR + 4, 74, 22), tab == i);
         int top = BAR + TABS + 8;
         if (tab == 0) draw_rules(c, w, h, top);
         else if (tab == 1) draw_log(c, w, h, top);
-        else draw_proxy(c, w, h, top);
+        else if (tab == 2) draw_proxy(c, w, h, top);
+        else draw_vpn(c, w, h, top);
         if (msg[0]) c.text_n(10, h - 16, msg, (w - 20) / 8, th::muted);
     }
     void draw_rules(Canvas& c, int w, int h, int top) {
@@ -156,6 +161,31 @@ struct FirewallApp : App {
         }
         if (!fw_log_count()) c.text_centered(0, top + 70, w, "nothing has been blocked", th::muted);
     }
+    void draw_vpn(Canvas& c, int w, int h, int top) {
+        VpnInfo vi;
+        vpn_info(&vi);
+        c.text(10, top + 4, "WireGuard VPN", th::text, 1, true);
+        u32 sc_col = vi.up ? th::green : vi.enabled ? th::gold_dk : th::muted;
+        c.disc(24, top + 34, 6, sc_col);
+        char b[160];
+        snprintf(b, sizeof(b), "%s: %s", vi.up ? "connected" : vi.enabled ? "connecting" : "off", vi.status);
+        c.text(38, top + 28, b, sc_col, 1, true);
+        if (vi.up) { snprintf(b, sizeof(b), "sent %u KB, received %u KB", (u32)(vi.tx >> 10), (u32)(vi.rx >> 10)); c.text(10, top + 48, b, th::muted); }
+        draw_button(c, w - 110, top + 22, 100, 26, vi.enabled ? "Turn off" : "Turn on", hot(w - 110, top + 22, 100, 26), !vi.enabled, vi.configured);
+        int y = top + 78;
+        static const char* labels[3] = {"server (host:port)", "server public key", "my tunnel address"};
+        TextField* fs[3] = {&vhost, &vkey, &vaddr};
+        for (int i = 0; i < 3; i++) {
+            c.text(10, y + i * 46, labels[i], th::muted);
+            fs[i]->focused = vfocus == i;
+            fs[i]->draw(c, 10, y + 16 + i * 46, w - 130);
+        }
+        draw_button(c, w - 110, y + 15 + 2 * 46, 100, 24, "Save", hot(w - 110, y + 15 + 2 * 46, 100, 24), true);
+        if (vi.configured) {
+            c.text(10, y + 3 * 46 + 4, "my public key (give this to the server):", th::muted);
+            c.text(10, y + 3 * 46 + 20, vi.public_key, th::text);
+        }
+    }
     void draw_proxy(Canvas& c, int w, int h, int top) {
         c.text(10, top + 4, "HTTP proxy for Beam, wget and curl", th::text, 1, true);
         c.text(10, top + 24, "host:port, for example 192.168.1.5:3128. Leave it empty to connect directly.", th::muted);
@@ -174,6 +204,7 @@ struct FirewallApp : App {
             if (e.left && tab == 0 && focus == 0) port.drag(e.x - 202, 64);
             else if (e.left && tab == 0 && focus == 1) addr.drag(e.x - 272, 160);
             else if (e.left && tab == 2) proxy.drag(e.x - 10, cw - 130);
+            else if (e.left && tab == 3) (vfocus == 0 ? vhost : vfocus == 1 ? vkey : vaddr).drag(e.x - 10, cw - 130);
             ui_invalidate();
             return;
         }
@@ -182,12 +213,16 @@ struct FirewallApp : App {
             if (tab == 0 && Rect{202, ny, 64, 22}.contains(e.x, e.y)) { focus = 0; port.click(e.x - 202, 64, kbd_shift_down()); }
             else if (tab == 0 && Rect{272, ny, 160, 22}.contains(e.x, e.y)) { focus = 1; addr.click(e.x - 272, 160, kbd_shift_down()); }
             else if (tab == 2 && Rect{10, top + 50, cw - 130, 22}.contains(e.x, e.y)) proxy.click(e.x - 10, cw - 130, kbd_shift_down());
+            else if (tab == 3) {
+                for (int i = 0; i < 3; i++)
+                    if (Rect{10, top + 78 + 16 + i * 46, cw - 130, 22}.contains(e.x, e.y)) { vfocus = i; (i == 0 ? vhost : i == 1 ? vkey : vaddr).click(e.x - 10, cw - 130, kbd_shift_down()); }
+            }
             ui_invalidate();
             return;
         }
         if (e.kind != M_UP || e.button != 1) return;
         if (Rect{cw - 96, 7, 86, 24}.contains(e.x, e.y)) { fw_enabled = !fw_enabled; fw_save(); }
-        for (int i = 0; i < 3; i++) if (Rect{10 + i * 78, BAR + 4, 74, 22}.contains(e.x, e.y)) tab = i;
+        for (int i = 0; i < 4; i++) if (Rect{10 + i * 78, BAR + 4, 74, 22}.contains(e.x, e.y)) tab = i;
         if (tab == 0) {
             if (Rect{10, top, 200, 22}.contains(e.x, e.y)) { fw_out_default_allow = !fw_out_default_allow; fw_save(); }
             else if (Rect{220, top, 150, 22}.contains(e.x, e.y)) preset_web();
@@ -207,6 +242,16 @@ struct FirewallApp : App {
             else if (Rect{cw - 118, ny, 106, 22}.contains(e.x, e.y)) { add_rule(n_allow, n_dir, n_proto, atoi(port.text), addr.text); if (!msg[0]) { port.set(""); addr.set(""); } }
         } else if (tab == 1) {
             if (Rect{cw - 96, top, 86, 22}.contains(e.x, e.y)) fw_log_clear();
+        } else if (tab == 3) {
+            VpnInfo vi;
+            vpn_info(&vi);
+            if (vi.configured && Rect{cw - 110, top + 22, 100, 26}.contains(e.x, e.y)) vpn_set_enabled(!vi.enabled);
+            else if (Rect{cw - 110, top + 78 + 15 + 2 * 46, 100, 24}.contains(e.x, e.y)) {
+                char err[96] = "", al[100], h2[100], k2[48], a2[16];
+                vpn_current(h2, k2, a2, al);
+                if (vpn_configure(vhost.text, vkey.text, vaddr.text, al, err, sizeof(err))) snprintf(msg, sizeof(msg), "saved; turn the VPN on to connect");
+                else strlcpy(msg, err, sizeof(msg));
+            }
         } else if (Rect{cw - 110, top + 49, 100, 24}.contains(e.x, e.y)) {
             net_proxy_set(proxy.text);
             snprintf(msg, sizeof(msg), proxy.len ? "proxy saved" : "proxy cleared");
@@ -220,6 +265,9 @@ struct FirewallApp : App {
             if (e.key == K_TAB) { focus ^= 1; ui_invalidate(); return; }
             if (e.key == K_ENTER) { add_rule(n_allow, n_dir, n_proto, atoi(port.text), addr.text); if (!msg[0]) { port.set(""); addr.set(""); } ui_invalidate(); return; }
             if (f.on_key(e)) ui_invalidate();
+        } else if (tab == 3) {
+            if (e.key == K_TAB) { vfocus = (vfocus + 1) % 3; ui_invalidate(); return; }
+            if ((vfocus == 0 ? vhost : vfocus == 1 ? vkey : vaddr).on_key(e)) ui_invalidate();
         } else if (tab == 2) {
             if (e.key == K_ENTER) { net_proxy_set(proxy.text); snprintf(msg, sizeof(msg), proxy.len ? "proxy saved" : "proxy cleared"); ui_invalidate(); return; }
             if (proxy.on_key(e)) ui_invalidate();

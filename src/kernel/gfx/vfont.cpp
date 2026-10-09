@@ -15,15 +15,16 @@ struct VFont {
     bool adv_have[4096];
 };
 
-static VFont* fonts[2] = {nullptr, nullptr};
-static bool tried[2] = {false, false};
+static VFont* fonts[4] = {nullptr, nullptr, nullptr, nullptr};
+static bool tried[4] = {false, false, false, false};
 
-VFont* vfont_get(bool bold) {
-    int k = bold ? 1 : 0;
+VFont* vfont_get(bool bold, bool mono) {
+    int k = (bold ? 1 : 0) + (mono ? 2 : 0);
     if (fonts[k] || tried[k]) return fonts[k];
     tried[k] = true;
     u32 len = 0;
-    const u8* data = asset_find(bold ? "font/DejaVuSans-Bold" : "font/DejaVuSans", &len);
+    const u8* data = asset_find(mono ? (bold ? "font/DejaVuSansMono-Bold" : "font/DejaVuSansMono")
+                                      : (bold ? "font/DejaVuSans-Bold" : "font/DejaVuSans"), &len);
     if (!data) return nullptr;
     TTFont* t = tt_open(data, len, 0);
     if (!t) return nullptr;

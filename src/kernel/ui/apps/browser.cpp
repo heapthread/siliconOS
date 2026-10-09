@@ -96,6 +96,7 @@ struct BeamTab : App {
     char tbuf[96];
     TextField addr;
     bool addr_focus = false;
+    int addr_start = 0;               // first visible character of the address
     bool addr_fresh = false;          // focused but untouched: the first key replaces the url
     Vec<char*> back, fwd;
     HttpRequest* req = nullptr;
@@ -748,7 +749,7 @@ struct BeamTab : App {
         if (best < 0) return false;
         HtmlItem& it = doc.items[best];
         *item = best;
-        *caret = clamp((mx - it.x + 4 * it.scale) / (8 * it.scale), 0, (int)it.tlen);
+        *caret = html_caret_at(doc.str(it), it.tlen, it.scale, it.bold, it.mono, mx - it.x);
         return true;
     }
     void select_word_at(int mx, int my) {
@@ -870,13 +871,14 @@ struct BeamTab : App {
         ui_invalidate();
     }
     void draw_text_marks(Canvas& c, int i, HtmlItem& it, int x, int y) {
-        int cw8 = 8 * it.scale;
+        const char* tx = doc.str(it);
+        auto pw = [&](int n) { return html_text_w(tx, n, it.scale, it.bold, it.mono); };
         if (find_on && fm_len) {
             for (int k = 0; k < fm_item.len; k++) {
                 if (fm_item[k] < i) continue;
                 if (fm_item[k] > i) break;
                 bool cur = k == fcur;
-                c.fill_alpha(x + fm_pos[k] * cw8, y - 1, fm_len * cw8, it.h + 2, cur ? 0xFFFF8C1A : 0xFFFFD21E, cur ? 160 : 120);
+                c.fill_alpha(x + pw(fm_pos[k]), y - 1, pw(fm_pos[k] + fm_len) - pw(fm_pos[k]), it.h + 2, cur ? 0xFFFF8C1A : 0xFFFFD21E, cur ? 160 : 120);
             }
         }
         if (has_selection()) {
@@ -884,7 +886,7 @@ struct BeamTab : App {
             sel_order(&li, &lc, &hi, &hc);
             if (i >= li && i <= hi) {
                 int a = i == li ? lc : 0, b = i == hi ? hc : it.tlen;
-                if (b > a) c.fill_alpha(x + a * cw8, y - 1, (b - a) * cw8, it.h + 2, 0xFF2D62E0, 110);
+                if (b > a) c.fill_alpha(x + pw(a), y - 1, pw(b) - pw(a), it.h + 2, 0xFF2D62E0, 110);
             }
         }
     }
@@ -932,7 +934,9 @@ struct BeamTab : App {
                 if (hov) c.fill(x - 1, y - 1, it.w + 2, it.h + 2, blend(0xFFFFFFFF, accent(), 70));
                 draw_text_marks(c, i, it, x, y);
                 c.emoji_px = it.scale >= 2 ? 16 : 12;       // headings get the big emoji sprites
+                c.mono = it.mono;
                 c.text_n(x, y, doc.str(it), it.tlen, it.color, it.scale, it.bold);
+                c.mono = false;
                 c.emoji_px = 12;
                 if (it.underline) c.hline(x, y + 11 * it.scale, it.w, hov ? accent() : it.color);
                 if (it.strike) c.hline(x, y + 6 * it.scale, it.w, it.color);
@@ -962,12 +966,12 @@ struct BeamTab : App {
                 char shown[256];
                 strlcpy(shown, v, sizeof(shown));
                 if (!strcmp(f.type, "password")) for (char* p = shown; *p; p++) *p = '*';
-                int maxc = (it.w - 10) / 8;
                 int sl = (int)strlen(shown);
-                int start = max(0, sl - maxc + 1);
-                c.text_n(x + 5, y + 4, shown + start, maxc, th::text);
+                int start = 0;
+                while (start < sl && html_text_w(shown + start, sl - start, 1, false, false) > it.w - 16) start++;
+                c.text(x + 6, y + 4, shown + start, th::text);
                 if (!strcmp(f.type, "select")) c.text(x + it.w - 14, y + 4, G_TRIDN, th::muted);
-                if (foc && (ticks() / 500) % 2 == 0) c.vline(x + 5 + (sl - start) * 8, y + 3, 14, accent());
+                if (foc && (ticks() / 500) % 2 == 0) c.vline(x + 6 + html_text_w(shown + start, sl - start, 1, false, false), y + 3, 14, accent());
                 break;
             }
             case HK_BUTTON:
@@ -999,12 +1003,19 @@ struct BeamTab : App {
         u32 lockc = secure ? 0xFF2E8B57 : 0xFF9C92B8;
         c.fill(ax + 7, 15, 9, 7, lockc);
         c.rect(ax + 9, 11, 5, 5, lockc);
-        int maxc = (aw - 32) / 8;
         const char* shown = addr.text;
-        int start = addr_focus ? max(0, addr.cur - maxc + 1) : 0;
-        if (addr_focus && addr_fresh) c.fill(ax + 22, 11, min((int)strlen(shown), maxc) * 8 + 4, 16, blend(0xFFFFFFFF, accent(), 110));
-        c.text_n(ax + 24, 13, shown + start, maxc, addr_focus ? th::text : 0xFF4A4262);
-        if (addr_focus && (ticks() / 500) % 2 == 0) c.vline(ax + 24 + (addr.cur - start) * 8, 11, 16, accent());
+        int avail = aw - 36;
+        int start = 0;
+        if (addr_focus) while (start < addr.cur && html_text_w(shown + start, addr.cur - start, 1, false, false) > avail) start++;
+        addr_start = start;
+        if (addr_focus && addr_fresh) c.fill(ax + 22, 11, min(avail, html_text_w(shown, (int)strlen(shown), 1, false, false)) + 4, 16, blend(0xFFFFFFFF, accent(), 110));
+        {
+            Rect oc = c.clip;
+            c.clip = Rect{ax + 22 + c.ox, 8 + c.oy, avail + 4, 22}.intersect(oc);
+            c.text(ax + 24, 13, shown + start, addr_focus ? th::text : th::muted);
+            c.clip = oc;
+        }
+        if (addr_focus && (ticks() / 500) % 2 == 0) c.vline(ax + 24 + html_text_w(shown + start, addr.cur - start, 1, false, false), 11, 16, accent());
         draw_button(c, w - 38, 7, 30, 24, G_DIAM, hot2(w - 38, 7, 30, 24));
         // progress: a travelling "packet" while loading
         if (req) {
@@ -1079,7 +1090,7 @@ struct BeamTab : App {
             if (e.kind != M_UP) {
                 if (Rect{132, 7, cw - 178, 24}.contains(e.x, e.y)) {
                     if (!addr_focus) { addr_focus = true; addr_fresh = true; addr.cur = addr.len; }
-                    else addr.cur = clamp((e.x - 156) / 8, 0, addr.len);
+                    else addr.cur = addr_start + html_caret_at(addr.text + addr_start, addr.len - addr_start, 1, false, false, e.x - 156);
                     focus_field = -1;
                 }
                 ui_invalidate();

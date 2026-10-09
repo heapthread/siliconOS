@@ -15,6 +15,16 @@ const u8* asset_find(const char* name, u32* len) {
 
 static Vec<Icon*> icons;
 static Vec<Wallpaper*> walls;
+static Image cursor_imgs[16];
+static const char* cursor_names[] = {"arrow", "hand", "ibeam", "move", "resize", "cross", "wait", "resize_h", "resize_v", "resize2"};
+
+const Image* cursor_image(int shape) { return shape >= 0 && shape < 10 && cursor_imgs[shape].px ? &cursor_imgs[shape] : nullptr; }
+
+// icons, wallpapers and cursors are PNG files; the older art is .sil
+static bool decode_asset(const u8* data, u32 len, Image& img) {
+    if (len > 8 && data[0] == 0x89 && data[1] == 'P') return image_load(data, len, img);
+    return image_decode(data, len, img);
+}
 
 // box-filter downscale by an integer factor, alpha weighted
 static Image downscale(const Image& src, int f) {
@@ -42,9 +52,13 @@ void ui_preload() {
     if (icons.len) return;
     for (u64 i = 0; i < asset_count; i++) {
         AssetEntry& e = asset_table[i];
-        if (str_starts(e.name, "sapp/") || str_starts(e.name, "font/")) continue;       // app modules, see modules_install_samples()
+        if (str_starts(e.name, "sapp/") || str_starts(e.name, "uapp/") || str_starts(e.name, "font/")) continue;       // app modules, see modules_install_samples()
         Image img;
-        if (!image_decode(e.data, (u32)e.len, img)) { klog("asset %s: bad data\n", e.name); continue; }
+        if (!decode_asset(e.data, (u32)e.len, img)) { klog("asset %s: bad data\n", e.name); continue; }
+        if (str_starts(e.name, "cursor/")) {
+            for (int k = 0; k < 10; k++) if (!strcmp(e.name + 7, cursor_names[k])) cursor_imgs[k] = img;
+            continue;
+        }
         if (str_starts(e.name, "icon/")) {
             Icon* ic = new Icon();
             ic->name = e.name + 5;

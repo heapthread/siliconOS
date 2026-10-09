@@ -64,6 +64,41 @@ u32  fw_blocked_out();
 bool net_proxy_get(char* host, int n, u16* port);   // false when no proxy is set
 void net_proxy_set(const char* hostport);
 
+// ---------------------------------------------------------------- vpn (net/wg.cpp): a WireGuard client
+struct VpnInfo { bool configured, enabled, up; char status[80]; char public_key[48]; char endpoint[100]; char address[16]; u64 tx, rx, rx_age_s; };
+void vpn_init();
+void vpn_tick();
+void vpn_load();                                       // re-read /home/.config/vpn
+void vpn_set_enabled(bool on);
+void vpn_info(VpnInfo* out);
+void vpn_make_keypair(char priv_b64[48], char pub_b64[48]);
+bool vpn_configure(const char* endpoint, const char* server_key, const char* address, const char* allowed, char* err, int errlen);
+void vpn_current(char* host, char* key, char* addr, char* allowed);   // buffers of 100/48/16/100
+bool vpn_routes(ip4 dst);                              // does this destination go through the tunnel
+ip4  vpn_address();
+bool vpn_send_ip(const u8* packet, u32 len);
+ip4  ip_src_for(ip4 dst);                              // the source address packets to dst carry
+
+// ---------------------------------------------------------------- ipv6 (net/ip6.cpp)
+struct Ip6Config { bool ready, has_global, has_router, has_dns; u8 ll[16], global[16], prefix[16], router[16], dns[16]; };
+extern Ip6Config ip6cfg;
+void ip6_init();
+void ip6_tick();
+void ip6_receive(const u8* packet, u32 len, const u8 src_mac[6]);
+bool ip6_send(const u8* dst, u8 next, const void* payload, u32 len);
+void ip6_to_str(const u8 a[16], char* out, int n);
+bool str_to_ip6(const char* s, u8 out[16]);          // accepts [addr] too
+const u8* ip6_source_for(const u8* dst);       // our address to use towards dst
+u16  ip6_checksum(const u8* src, const u8* dst, u8 next, const u8* data, u32 len);
+typedef void (*Ping6Reply)(void* ctx, u16 seq, u32 rtt_ms, const u8* from, u8 hops);   // rtt 0xFFFFFFFF = timed out
+bool ip6_ping(const u8* dst, u16 id, u16 seq, Ping6Reply cb, void* ctx);
+typedef void (*Udp6Handler)(const u8* src, u16 sport, const u8* data, u32 len);
+bool udp6_bind(u16 port, Udp6Handler h);
+void udp6_unbind(u16 port);
+bool udp6_send(const u8* dst, u16 sport, u16 dport, const void* data, u32 len);
+int  dns6_resolve(const char* name, u8 out[16]);      // 1 resolved, 0 working, -1 failed
+int  tcp_connect6(const u8* dst, u16 port);
+
 // ---------------------------------------------------------------- icmp (ping)
 typedef void (*PingReply)(void* ctx, u16 seq, u32 rtt_ms, ip4 from, u8 ttl);
 bool icmp_ping(ip4 dst, u16 id, u16 seq, PingReply cb, void* ctx);

@@ -4,7 +4,7 @@
 #include "gfx.h"
 
 struct VFont;
-VFont* vfont_get(bool bold);                         // nullptr when the font data is missing
+VFont* vfont_get(bool bold, bool mono = false);                         // nullptr when the font data is missing
 int    vfont_gid(VFont* f, u32 cp);                  // glyph index, 0 = .notdef
 float  vfont_advance(VFont* f, int gid, float px);   // horizontal advance in pixels
 float  vfont_ascent(float px);
