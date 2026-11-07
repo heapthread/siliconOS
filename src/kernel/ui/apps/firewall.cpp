@@ -152,9 +152,9 @@ struct FirewallApp : App {
             const FwLogEntry* e = fw_log(i);
             DateTime dt;
             stamp_to_datetime(e->stamp, dt);
-            char ip[20];
-            ip_to_str(e->remote, ip);
-            snprintf(b, sizeof(b), "%02d:%02d:%02d  %s  %s  %s:%u", dt.hour, dt.minute, dt.second, e->inbound ? "in " : "out", FirewallApp::proto_name(e->proto), ip, e->port);
+            char ip[48];
+            if (e->v6) ip6_to_str(e->remote6, ip, sizeof(ip)); else ip_to_str(e->remote, ip);
+            snprintf(b, sizeof(b), e->v6 ? "%02d:%02d:%02d  %s  %s  [%s]:%u" : "%02d:%02d:%02d  %s  %s  %s:%u", dt.hour, dt.minute, dt.second, e->inbound ? "in " : "out", FirewallApp::proto_name(e->proto), ip, e->port);
             c.text(10, y, b, th::text);
             if (e->rule >= 0) { snprintf(b, sizeof(b), "rule %d", e->rule + 1); c.text(w - 80, y, b, th::muted); }
             else c.text(w - 80, y, "default", th::muted);
@@ -168,7 +168,7 @@ struct FirewallApp : App {
         u32 sc_col = vi.up ? th::green : vi.enabled ? th::gold_dk : th::muted;
         c.disc(24, top + 34, 6, sc_col);
         char b[160];
-        snprintf(b, sizeof(b), "%s: %s", vi.up ? "connected" : vi.enabled ? "connecting" : "off", vi.status);
+        if (vi.up) snprintf(b, sizeof(b), "connected"); else snprintf(b, sizeof(b), "%s: %s", vi.enabled ? "connecting" : "off", vi.status);
         c.text(38, top + 28, b, sc_col, 1, true);
         if (vi.up) { snprintf(b, sizeof(b), "sent %u KB, received %u KB", (u32)(vi.tx >> 10), (u32)(vi.rx >> 10)); c.text(10, top + 48, b, th::muted); }
         draw_button(c, w - 110, top + 22, 100, 26, vi.enabled ? "Turn off" : "Turn on", hot(w - 110, top + 22, 100, 26), !vi.enabled, vi.configured);

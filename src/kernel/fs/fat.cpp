@@ -1,4 +1,4 @@
-// silicon - FAT16 / FAT32 (see fat.h)
+// silicon - FAT12 / FAT16 / FAT32 (see fat.h)
 #include "fat.h"
 #include "../text.h"
 #include "../drv/drivers.h"
@@ -35,7 +35,7 @@ static inline void wr32(u8* p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] 
 FatVol* fat_vol_by_id(int id) { return id >= 1 && id <= 4 ? vols[id - 1] : nullptr; }
 bool fat_readonly(FatVol* v) { return v->ro; }
 bool fat_dirty(FatVol* v) { return v->dirty || v->dels.len || v->to_free.len; }
-const char* fat_type_name(FatVol* v) { return v->type == 32 ? "FAT32" : "FAT16"; }
+const char* fat_type_name(FatVol* v) { return v->type == 32 ? "FAT32" : v->type == 16 ? "FAT16" : "FAT12"; }
 
 static bool dread(FatVol* v, u32 sector, u32 count, void* buf) { return v->dev->read(v->dev, (u64)v->part_lba + sector, count, buf); }
 static bool dwrite(FatVol* v, u32 sector, u32 count, const void* buf) { return v->dev->write(v->dev, (u64)v->part_lba + sector, count, buf); }
@@ -64,12 +64,14 @@ static u32 fat_get(FatVol* v, u32 c) { return c < v->clusters + 2 ? v->fat[c] : 
 static void fat_set(FatVol* v, u32 c, u32 val) {
     if (c >= v->clusters + 2) return;
     v->fat[c] = val;
-    u32 sec = (c * (v->type == 32 ? 4 : 2)) / 512;
+    u32 off = v->type == 12 ? c * 3 / 2 : c * (v->type == 32 ? 4 : 2);
+    u32 sec = off / 512, sec2 = (off + (v->type == 12 ? 1 : 0)) / 512;       // a 12-bit entry can straddle two sectors
     if (sec < v->fat_sectors) v->fat_dirty[sec] = 1;
+    if (sec2 < v->fat_sectors) v->fat_dirty[sec2] = 1;
     v->dirty = true;
 }
-static bool is_eoc(FatVol* v, u32 c) { return c >= (v->type == 32 ? 0x0FFFFFF8u : 0xFFF8u); }
-static u32 eoc(FatVol* v) { return v->type == 32 ? 0x0FFFFFFFu : 0xFFFFu; }
+static bool is_eoc(FatVol* v, u32 c) { return c >= (v->type == 32 ? 0x0FFFFFF8u : v->type == 16 ? 0xFFF8u : 0xFF8u); }
+static u32 eoc(FatVol* v) { return v->type == 32 ? 0x0FFFFFFFu : v->type == 16 ? 0xFFFFu : 0xFFFu; }
 
 static u32 alloc_cluster(FatVol* v) {
     for (u32 n = 0; n < v->clusters; n++) {
@@ -157,7 +159,7 @@ static bool write_chain(FatVol* v, u32 first, const u8* data, u32 bytes) {
 // ---------------------------------------------------------------- directories
 // raw bytes of a directory: its cluster chain, or the fixed root area of FAT16 (cluster 0)
 static bool dir_load(FatVol* v, u32 cluster, u8** out, u32* len) {
-    if (cluster == 0 && v->type == 16) {
+    if (cluster == 0 && v->type != 32) {
         *len = v->root_dir_sectors * 512;
         *out = (u8*)kmalloc_try(*len + 32);
         return *out && dread(v, v->root_dir_sector, v->root_dir_sectors, *out);
@@ -171,7 +173,7 @@ static bool dir_load(FatVol* v, u32 cluster, u8** out, u32* len) {
 }
 
 static bool dir_store(FatVol* v, u32 cluster, const u8* raw, u32 len) {
-    if (cluster == 0 && v->type == 16) return dwrite(v, v->root_dir_sector, v->root_dir_sectors, raw);
+    if (cluster == 0 && v->type != 32) return dwrite(v, v->root_dir_sector, v->root_dir_sectors, raw);
     return write_chain(v, cluster, raw, len);
 }
 
@@ -306,7 +308,6 @@ FatVol* fat_mount(BlkDev* dev, FsNode* mount_point, char* label_out, char* err, 
     if (total <= v->data_start) { snprintf(err, errlen, "damaged file system"); delete v; return nullptr; }
     v->clusters = (total - v->data_start) / v->spc;
     v->type = v->clusters < 4085 ? 12 : v->clusters < 65525 ? 16 : 32;
-    if (v->type == 12) { snprintf(err, errlen, "FAT12 drives are not supported"); delete v; return nullptr; }
     v->root_cluster = v->type == 32 ? rd32(sec + 44) : 0;
     v->fsinfo = v->type == 32 ? rd16(sec + 48) : 0;
     const u8* lab = sec + (v->type == 32 ? 71 : 43);
@@ -315,11 +316,22 @@ FatVol* fat_mount(BlkDev* dev, FsNode* mount_point, char* label_out, char* err, 
     for (int k = 10; k >= 0 && v->label[k] == ' '; k--) v->label[k] = 0;
     // the FAT, decoded into 32-bit entries
     u32 entries = v->clusters + 2;
-    if (entries * 4 > (96u << 20) || fatsz * 512 < entries * (v->type == 32 ? 4 : 2)) { snprintf(err, errlen, "drive too large"); delete v; return nullptr; }
+    if (entries * 4 > (96u << 20) || fatsz * 512 < (v->type == 12 ? (entries * 3 + 1) / 2 : entries * (v->type == 32 ? 4 : 2))) { snprintf(err, errlen, "drive too large"); delete v; return nullptr; }
     v->fat = (u32*)kmalloc_try(entries * 4 + 16);
     v->fat_dirty = (u8*)kcalloc_try(fatsz + 1);
     u8* chunk = (u8*)kmalloc_try(64 * 512);
     if (!v->fat || !v->fat_dirty || !chunk) { snprintf(err, errlen, "out of memory"); delete v; return nullptr; }
+    if (v->type == 12) {                                         // 12-bit entries, two to every three bytes
+        u8* raw12 = (u8*)kmalloc_try(fatsz * 512 + 16);
+        if (!raw12 || !dread(v, v->reserved, fatsz, raw12)) { snprintf(err, errlen, "can't read the FAT"); if (raw12) kfree(raw12); kfree(chunk); delete v; return nullptr; }
+        for (u32 c = 0; c < entries; c++) {
+            u32 o = c * 3 / 2;
+            u32 pair = raw12[o] | ((u32)raw12[o + 1] << 8);
+            v->fat[c] = (c & 1) ? (pair >> 4) : (pair & 0xFFF);
+        }
+        kfree(raw12);
+        fatsz = 0;                                                 // the generic loop below is not needed
+    }
     for (u32 s = 0; s < fatsz; s += 64) {
         u32 n = min<u32>(64, fatsz - s);
         if (!dread(v, v->reserved + s, n, chunk)) { snprintf(err, errlen, "can't read the FAT"); kfree(chunk); delete v; return nullptr; }
@@ -622,6 +634,23 @@ static bool sync_dir(FatVol* v, FsNode* dir, u32 dir_cluster) {
 static bool flush_fat(FatVol* v) {
     bool ok = true;
     u8 sec[512];
+    if (v->type == 12) {
+        u8* raw12 = (u8*)kcalloc_try(v->fat_sectors * 512 + 16);
+        if (!raw12) return false;
+        if (!dread(v, v->reserved, v->fat_sectors, raw12)) { kfree(raw12); return false; }
+        for (u32 c = 0; c < v->clusters + 2; c++) {
+            u32 o = c * 3 / 2, val = v->fat[c] & 0xFFF;
+            if (c & 1) { raw12[o] = (u8)((raw12[o] & 0x0F) | ((val & 0x0F) << 4)); raw12[o + 1] = (u8)(val >> 4); }
+            else { raw12[o] = (u8)val; raw12[o + 1] = (u8)((raw12[o + 1] & 0xF0) | (val >> 8)); }
+        }
+        for (u32 s = 0; s < v->fat_sectors; s++) {
+            if (!v->fat_dirty[s]) continue;
+            for (u32 f = 0; f < v->nfats; f++) ok &= dwrite(v, v->reserved + f * v->fat_sectors + s, 1, raw12 + s * 512);
+            v->fat_dirty[s] = 0;
+        }
+        kfree(raw12);
+        return ok;
+    }
     for (u32 s = 0; s < v->fat_sectors; s++) {
         if (!v->fat_dirty[s]) continue;
         // encode this sector of the FAT

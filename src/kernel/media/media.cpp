@@ -960,11 +960,10 @@ Media* media_open(const u8* data, u32 size, const char* name, char* err, int err
         if (FlacTrack* t = flac_open(data, size, m, err, errlen)) { m->audio = t; ok = true; }
     } else if (str_icontains(name, ".mp4") || str_icontains(name, ".m4a") || str_icontains(name, ".m4b") || (size > 12 && !memcmp(data + 4, "ftyp", 4))) {
         strlcpy(m->kind, "m4a", sizeof(m->kind));
-        snprintf(err, errlen, "AAC/MP4 decoding is not finished yet (the decoder is still out of tune), so these files are not played");
-        ok = false;
+        ok = mp4_open(data, size, m, err, errlen);
     } else if (str_icontains(name, ".aac") || (size > 7 && data[0] == 0xFF && (data[1] & 0xF6) == 0xF0)) {
         strlcpy(m->kind, "aac", sizeof(m->kind));
-        snprintf(err, errlen, "AAC decoding is not finished yet, so .aac files are not played");
+        if (AacTrack* t = adts_open(data, size, m, err, errlen)) { m->audio = t; ok = true; }
     } else if (str_icontains(name, ".ogg") || str_icontains(name, ".oga") || (size > 4 && !memcmp(data, "OggS", 4))) {
         strlcpy(m->kind, "ogg", sizeof(m->kind));
         OggTrack* t = new OggTrack();

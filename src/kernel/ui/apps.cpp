@@ -109,7 +109,7 @@ const char* file_icon_name(const char* name, bool dir, bool has_children) {
     if (str_icontains(name, ".zip")) return "archive";
     if (is_pdf_name(name)) return "pdf";
     if (is_office_name(name)) return "docs";
-    if (str_icontains(name, ".mp3") || str_icontains(name, ".wav") || str_icontains(name, ".avi") || str_icontains(name, ".ogg")) return "media";
+    if (media_is_media_name(name)) return "media";
     if (str_icontains(name, ".ics")) return "calendar";
     if (str_icontains(name, ".txt") || str_icontains(name, ".md") || str_icontains(name, ".log")) return "text_file";
     return "file";
@@ -132,6 +132,7 @@ void open_path(const char* path) {
     if (str_icontains(n->name, ".zip")) { launch("__new__", "archive"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (is_office_name(n->name)) { launch("__new__", "docs"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (media_is_media_name(n->name)) { launch("__new__", "media"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
+    if (str_icontains(n->name, ".ics")) { launch("__new__", "calendar"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (str_icontains(n->name, ".uapp")) { uapp_run(path); return; }
     if (str_icontains(n->name, ".sapp")) { App* a = new_module(path); Window* w = wm_open(a, a->pref_w(), a->pref_h()); w->resizable = a->resizable(); return; }
     if (is_pdf_name(n->name)) { launch("__new__", "pdfview"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }

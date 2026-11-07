@@ -76,10 +76,10 @@ void fw_log_clear() { log_n = log_head = 0; blocked_in = blocked_out = 0; }
 u32 fw_blocked_in() { return blocked_in; }
 u32 fw_blocked_out() { return blocked_out; }
 
-bool fw_check(bool inbound, u8 proto, ip4 remote, u16 port) {
+static bool fw_check_any(bool inbound, u8 proto, ip4 remote, const u8* remote6, u16 port) {
     fw_ensure();
     if (!fw_enabled) return true;
-    if (proto == 17 && (port == 67 || port == 68)) return true;      // DHCP always works
+    if (!remote6 && proto == 17 && (port == 67 || port == 68)) return true;      // DHCP always works
     int hit = -1;
     bool allow = inbound ? true : fw_out_default_allow;
     for (int i = 0; i < rules.len; i++) {
@@ -87,7 +87,7 @@ bool fw_check(bool inbound, u8 proto, ip4 remote, u16 port) {
         if (!(r.dir & (inbound ? 1 : 2))) continue;
         if (r.proto && r.proto != proto) continue;
         if (r.port && r.port != port) continue;
-        if (r.mask && (remote & r.mask) != (r.ip & r.mask)) continue;
+        if (r.mask && (remote6 || (remote & r.mask) != (r.ip & r.mask))) continue;
         hit = i;
         allow = r.allow;
         r.hits++;
@@ -97,9 +97,27 @@ bool fw_check(bool inbound, u8 proto, ip4 remote, u16 port) {
     if (inbound) blocked_in++; else blocked_out++;
     FwLogEntry& e = log_buf[log_head];
     e.stamp = rtc_stamp(); e.inbound = inbound; e.proto = proto; e.remote = remote; e.port = port; e.rule = hit;
+    e.v6 = remote6 != nullptr;
+    if (remote6) memcpy(e.remote6, remote6, 16);
     log_head = (log_head + 1) % 40;
     if (log_n < 40) log_n++;
     return false;
+}
+
+bool fw_check(bool inbound, u8 proto, ip4 remote, u16 port) { return fw_check_any(inbound, proto, remote, nullptr, port); }
+
+// IPv6: next_header 6 tcp, 17 udp, 58 icmpv6 (rules call that "icmp"). Neighbour discovery and router
+// advertisements always pass, otherwise the network could not work at all. The port is the packet's
+// destination port, as for IPv4.
+bool fw_check6(bool inbound, u8 next, const u8* remote, const u8* payload, u32 len) {
+    u16 port = 0;
+    u8 proto = next;
+    if (next == 58) {
+        if (len >= 1 && payload[0] >= 133 && payload[0] <= 137) return true;
+        proto = 1;
+    } else if ((next == 6 || next == 17) && len >= 4) port = (u16)((payload[2] << 8) | payload[3]);
+    if (next == 17 && (port == 546 || port == 547)) return true;                     // DHCPv6
+    return fw_check_any(inbound, proto, 0, remote, port);
 }
 
 // ---- proxy: "host:port" in /home/.config/proxy; empty or missing = connect directly

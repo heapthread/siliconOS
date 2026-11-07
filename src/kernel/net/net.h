@@ -45,10 +45,11 @@ struct FwRule {
     ip4  ip, mask;            // remote address match (mask 0 = any)
     u32  hits;
 };
-struct FwLogEntry { u32 stamp; bool inbound; u8 proto; ip4 remote; u16 port; int rule; };
+struct FwLogEntry { u32 stamp; bool inbound; u8 proto; ip4 remote; u16 port; int rule; bool v6; u8 remote6[16]; };
 extern bool fw_enabled;
 extern bool fw_out_default_allow;
 bool fw_check(bool inbound, u8 proto, ip4 remote, u16 port);   // false = drop the packet
+bool fw_check6(bool inbound, u8 next_header, const u8* remote, const u8* payload, u32 len);   // IPv6: the same rules (rules limited to an IPv4 range never match)
 int  fw_rule_count();
 FwRule* fw_rule(int i);
 void fw_add(const FwRule& r);

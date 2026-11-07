@@ -161,6 +161,7 @@ const u8* ip6_source_for(const u8* dst) {
 
 bool ip6_send(const u8* dst, u8 next, const void* payload, u32 len) {
     if (!ip6cfg.ready) return false;
+    if (!fw_check6(false, next, dst, (const u8*)payload, len)) return false;
     const u8* src = ip6_source_for(dst);
     u8 mac[6];
     if (is_multicast(dst)) {
@@ -347,6 +348,7 @@ void ip6_receive(const u8* d, u32 len, const u8 src_mac[6]) {
     }
     if (!mine) return;
     const u8* p = d + 40;
+    if (!fw_check6(true, h->next, h->src, p, pl)) return;
     switch (h->next) {
     case 58: icmp6_receive(h, p, pl, src_mac); break;
     case 17:

@@ -1,6 +1,6 @@
-"""Make a small FAT16 / FAT32 disk image for testing USB drives in QEMU.
+"""Make a small FAT12 / FAT16 / FAT32 disk image for testing USB drives in QEMU.
 
-    python tools/mkfat.py out.img [size_mb] [label] [--fat16]     creates the image with a few sample files
+    python tools/mkfat.py out.img [size_mb] [label] [--fat16|--fat12]     creates the image with a few sample files
     python tools/mkfat.py --ls out.img                            lists what is on an image (a tiny FAT reader)
 """
 import struct
@@ -10,21 +10,23 @@ SECTOR = 512
 
 
 class Fat:
-    def __init__(self, size_mb=64, label="SILICONUSB", fat16=False):
+    def __init__(self, size_mb=64, label="SILICONUSB", fat16=False, fat12=False):
+        self.fat12 = fat12
+        fat16 = fat16 or fat12
         self.fat16 = fat16
         self.total = size_mb * 1024 * 1024 // SECTOR
         self.spc = 2 if fat16 else 1
         self.reserved = 1 if fat16 else 32
         self.root_sectors = 32 if fat16 else 0
         clusters = (self.total - self.reserved - self.root_sectors) // self.spc
-        self.fat_sectors = ((clusters + 2) * (2 if fat16 else 4) + SECTOR - 1) // SECTOR
+        self.fat_sectors = (((clusters + 2) * 3 + 1) // 2 + SECTOR - 1) // SECTOR if fat12 else ((clusters + 2) * (2 if fat16 else 4) + SECTOR - 1) // SECTOR
         self.root_start = self.reserved + 2 * self.fat_sectors
         self.data_start = self.root_start + self.root_sectors
         self.clusters = (self.total - self.data_start) // self.spc
-        self.EOC = 0xFFFF if fat16 else 0x0FFFFFFF
+        self.EOC = 0xFFF if fat12 else 0xFFFF if fat16 else 0x0FFFFFFF
         self.img = bytearray(self.total * SECTOR)
         self.fat = [0] * (self.clusters + 2)
-        self.fat[0] = 0xFFF8 if fat16 else 0x0FFFFFF8
+        self.fat[0] = 0xFF8 if fat12 else 0xFFF8 if fat16 else 0x0FFFFFF8
         self.fat[1] = self.EOC
         self.next = 3
         self.dirs = {2: bytearray()}          # cluster 2 stands for the root directory
@@ -43,7 +45,7 @@ class Fat:
             boot[38] = 0x29
             struct.pack_into("<I", boot, 39, 0x51C0B10C)
             boot[43:54] = lab
-            boot[54:62] = b"FAT16   "
+            boot[54:62] = b"FAT12   " if fat12 else b"FAT16   "
         else:
             struct.pack_into("<HBHBHHBHHHII", boot, 11, SECTOR, self.spc, self.reserved, 2, 0, 0, 0xF8, 0, 63, 255, 0, self.total)
             struct.pack_into("<IHHIHH", boot, 36, self.fat_sectors, 0, 0, 2, 1, 6)
@@ -162,7 +164,19 @@ class Fat:
                 off = (self.data_start + (cc - 2) * self.spc) * SECTOR
                 piece = data[i * self.csize():(i + 1) * self.csize()]
                 self.img[off:off + len(piece)] = piece
-        fat = struct.pack(("<%dH" if self.fat16 else "<%dI") % len(self.fat), *self.fat)
+        if self.fat12:
+            fat = bytearray((len(self.fat) * 3 + 1) // 2 + 2)
+            for c, val in enumerate(self.fat):
+                o = c * 3 // 2
+                if c & 1:
+                    fat[o] = (fat[o] & 0x0F) | ((val & 0x0F) << 4)
+                    fat[o + 1] = val >> 4
+                else:
+                    fat[o] = val & 0xFF
+                    fat[o + 1] = (fat[o + 1] & 0xF0) | (val >> 8)
+            fat = bytes(fat)
+        else:
+            fat = struct.pack(("<%dH" if self.fat16 else "<%dI") % len(self.fat), *self.fat)
         for k in range(2):
             o = (self.reserved + k * self.fat_sectors) * SECTOR
             self.img[o:o + len(fat)] = fat
@@ -179,16 +193,25 @@ def read_fat(path):
     data0 = root_start + root_sectors
     clusters = (total - data0) // spc
     fat32 = clusters >= 65525
+    fat12 = clusters < 4085
     root = struct.unpack_from("<I", d, 44)[0] if fat32 else 0
     esz = 4 if fat32 else 2
-    fat = struct.unpack_from(("<%dI" if fat32 else "<%dH") % (fat_sz * bps // esz), d, rsv * bps)
-    eoc = 0x0FFFFFF8 if fat32 else 0xFFF8
+    if fat12:
+        raw = d[rsv * bps:(rsv + fat_sz) * bps]
+        fat = []
+        for c in range(fat_sz * bps * 2 // 3):
+            o = c * 3 // 2
+            pair = raw[o] | (raw[o + 1] << 8)
+            fat.append((pair >> 4) if c & 1 else (pair & 0xFFF))
+    else:
+        fat = struct.unpack_from(("<%dI" if fat32 else "<%dH") % (fat_sz * bps // esz), d, rsv * bps)
+    eoc = 0x0FFFFFF8 if fat32 else 0xFF8 if fat12 else 0xFFF8
 
     def chain(c):
         out = []
         while 2 <= c < eoc:
             out.append(c)
-            c = fat[c] & (0x0FFFFFFF if fat32 else 0xFFFF)
+            c = fat[c] & (0x0FFFFFFF if fat32 else 0xFFF if fat12 else 0xFFFF)
         return out
 
     def cdata(c):
@@ -234,10 +257,10 @@ if __name__ == "__main__":
             print("%8d  %s" % (sz, n))
         sys.exit()
     fs = Fat(int(sys.argv[2]) if len(sys.argv) > 2 else 64, sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else "SILICONUSB",
-             "--fat16" in sys.argv)
+             "--fat16" in sys.argv, "--fat12" in sys.argv)
     fs.add(2, "hello.txt", b"Hello from a FAT drive!\n")
     docs = fs.add(2, "Documents Folder")
     fs.add(docs, "A long file name here.txt", b"long names work\n" * 50)
-    fs.add(2, "big.bin", bytes((i * 7) % 256 for i in range(300000)))
+    fs.add(2, "big.bin", bytes((i * 7) % 256 for i in range(300000 if "--fat12" not in sys.argv else 1000000)))
     open(sys.argv[1], "wb").write(fs.finish())
     print("wrote", sys.argv[1])

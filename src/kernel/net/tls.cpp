@@ -141,7 +141,9 @@ static void send_client_hello(TlsConn* t) {
         memcpy(d + 5, t->host, hl);
         ext(0x0000, d, hl + 5);
     }
-    { u8 d[] = {0, 2, 0x00, 0x1d}; ext(0x000a, d, sizeof(d)); }                 // supported_groups: x25519
+    // supported_groups: x25519 first; secp256r1 is listed too because servers with an ECDSA certificate
+    // refuse a client that doesn't list the certificate's curve (TLS 1.2 key exchange still uses x25519)
+    { u8 d[] = {0, 4, 0x00, 0x1d, 0x00, 0x17}; ext(0x000a, d, sizeof(d)); }
     { u8 d[] = {0, 16, 0x04, 0x03, 0x08, 0x04, 0x04, 0x01, 0x05, 0x03, 0x08, 0x05, 0x05, 0x01, 0x08, 0x06, 0x06, 0x01};
       ext(0x000d, d, sizeof(d)); }                                             // signature_algorithms
     { u8 d[] = {4, 0x03, 0x04, 0x03, 0x03}; ext(0x002b, d, sizeof(d)); }       // supported_versions: 1.3, 1.2

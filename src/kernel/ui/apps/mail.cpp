@@ -144,7 +144,10 @@ struct Session {
     bool tick() {
         u64 now = ticks();
         if (st == DONE || st == FAILED) return false;
-        if (now - last > 25000) { fail("the server stopped answering"); return false; }
+        if (now - last > 25000) {
+            fail(st == RESOLVE ? "couldn't look up the server's address" : st == CONNECT ? "couldn't connect to the server" : st == HANDSHAKE ? "the secure handshake never finished" : "the server stopped answering");
+            return false;
+        }
         switch (st) {
         case RESOLVE: {
             if (!net_link_up()) { fail("no network connection"); return false; }

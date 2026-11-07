@@ -180,11 +180,11 @@ static const u8 TNS_MAX_L[12] = {31, 31, 34, 40, 42, 51, 46, 46, 42, 42, 42, 39}
 static const u8 TNS_MAX_S[12] = {9, 9, 10, 14, 14, 14, 14, 14, 14, 14, 14, 14};
 static const int SAMPLE_RATES[13] = {96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350};
 
-static const float TNS_C_0_3[8] = {0.f, -0.43388373f, -0.78183150f, -0.97492790f, 0.98480773f, 0.86602539f, 0.64278758f, 0.34202015f};
-static const float TNS_C_1_3[4] = {0.f, -0.43388373f, 0.64278758f, 0.34202015f};
-static const float TNS_C_0_4[16] = {0.f, -0.20791170f, -0.40673664f, -0.58778524f, -0.74314481f, -0.86602539f, -0.95105654f, -0.99452192f,
-                                    0.99573416f, 0.96182561f, 0.89516330f, 0.79801720f, 0.67369562f, 0.52643216f, 0.36124167f, 0.18374951f};
-static const float TNS_C_1_4[8] = {0.f, -0.20791170f, -0.40673664f, -0.58778524f, 0.67369562f, 0.52643216f, 0.36124167f, 0.18374951f};
+static const float TNS_C_0_3[8] = {0.f, 0.43388373f, 0.78183150f, 0.97492790f, -0.98480773f, -0.86602539f, -0.64278758f, -0.34202015f};
+static const float TNS_C_1_3[4] = {0.f, 0.43388373f, -0.64278758f, -0.34202015f};
+static const float TNS_C_0_4[16] = {0.f, 0.20791170f, 0.40673664f, 0.58778524f, 0.74314481f, 0.86602539f, 0.95105654f, 0.99452192f,
+                                    -0.99573416f, -0.96182561f, -0.89516330f, -0.79801720f, -0.67369562f, -0.52643216f, -0.36124167f, -0.18374951f};
+static const float TNS_C_1_4[8] = {0.f, 0.20791170f, 0.40673664f, 0.58778524f, -0.67369562f, -0.52643216f, -0.36124167f, -0.18374951f};
 
 // ---------------------------------------------------------------- Huffman
 static int hcb_find(Bits& b, const HuffRow* t, int n) {
@@ -457,6 +457,9 @@ static bool read_ics(Bits& b, AacDec* d, Chan& c, bool common_window) {
     c.tns_present = b.bit() != 0;
     if (c.tns_present && !read_tns(b, c)) return false;
     if (b.bit()) { snprintf(d->err, sizeof(d->err), "gain control isn't supported"); return false; }
+#ifdef AAC_DEBUG
+    { int n13 = 0, n14 = 0; for (int i = 0; i < 128; i++) { if (c.sfb_cb[i] == 13) n13++; if (c.sfb_cb[i] >= 14) n14++; } if (n13 || n14) fprintf(stderr, "  pns %d intensity %d pulse %d\n", n13, n14, pulse); }
+#endif
     return read_spectrum(b, d, c, pulse, pn, ppos, pamp);
 }
 
@@ -598,6 +601,9 @@ bool aac_decode(AacDec* d, const u8* data, u32 len, i16* out) {
                 else if (d->ms_mask == 3) return false;
             }
             if (!read_ics(b, d, l, common) || !read_ics(b, d, r, common)) return false;
+#ifdef AAC_DEBUG
+            { static int fno = 0; fprintf(stderr, "f%d L seq%d ng%d g[%d %d %d %d] maxsfb%d tns%d R seq%d ng%d tns%d ms%d common%d\n", fno++, l.info.win_seq, l.info.ngroups, l.info.glen[0], l.info.glen[1], l.info.glen[2], l.info.glen[3], l.info.max_sfb, l.tns_present, r.info.win_seq, r.info.ngroups, r.tns_present, d->ms_mask, common); }
+#endif
             // mid/side, then intensity
             IcsInfo& info = l.info;
             int g_off = 0, idx = 0;
@@ -660,7 +666,7 @@ bool aac_decode(AacDec* d, const u8* data, u32 len, i16* out) {
         } else return false;                                  // CCE and anything else
     }
     if (!got_pcm) return false;
-    const float K = 32768.0f;
+    const float K = 1.0f;
     for (int i = 0; i < LONGN; i++) {
         float l = d->ch[0].pcm[i] * K, r = (chans_done > 1 ? d->ch[1].pcm[i] : d->ch[0].pcm[i]) * K;
         out[i * 2] = (i16)(l > 32767 ? 32767 : l < -32768 ? -32768 : l);
