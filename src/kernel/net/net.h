@@ -141,6 +141,10 @@ bool tls_closed(TlsConn* t);
 const char* tls_error(TlsConn* t);
 const char* tls_version(TlsConn* t);   // "tls 1.2" / "tls 1.3"
 void tls_free(TlsConn* t);
+bool tls_verify_enabled();                      // certificate checking (on unless /home/.config/tls_verify says off)
+void tls_verify_set(bool on);
+bool tls_trust_add(const char* host, char* msg, int n);   // pin the certificate that was just refused for host
+bool tls_trust_remove(const char* host);
 
 // ---------------------------------------------------------------- http(s) client
 struct HttpRequest;

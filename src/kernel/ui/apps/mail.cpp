@@ -170,7 +170,7 @@ struct Session {
             break;
         case HANDSHAKE: {
             int r = tls_handshake(tls);
-            if (r < 0) fail("secure connection failed");
+            if (r < 0) { char m[140]; snprintf(m, sizeof(m), "secure connection failed: %s", tls_error(tls)); fail(m); }
             else if (r > 0) { st = RUN; last = now; }
             break;
         }

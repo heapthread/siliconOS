@@ -962,6 +962,7 @@ void cmd_netstat(Shell&, int, char**);
 void cmd_ping(Shell&, int, char**);
 void cmd_ps(Shell&, int, char**);
 void cmd_vpn(Shell&, int, char**);
+void cmd_trust(Shell&, int, char**);
 void cmd_lsblk(Shell&, int, char**);
 void cmd_mount(Shell&, int, char**);
 void cmd_eject(Shell&, int, char**);
@@ -1042,6 +1043,7 @@ const Command commands[] = {
     {"umount", "<drive>", "same as eject", cmd_eject},
     {"blkdump", "<drive> [sector]", "hex dump a drive sector", cmd_blkdump},
     {"vpn", "[status|setup|on|off|genkey]", "WireGuard VPN", cmd_vpn},
+    {"trust", "[add|remove <host>|on|off]", "certificate checking and pinned certificates", cmd_trust},
     {"ps", "", "list running programs", cmd_ps},
     {"kill", "<pid>", "end a program", cmd_kill},
     {"run", "<program.uapp>", "start a user program (ring 3)", cmd_run},

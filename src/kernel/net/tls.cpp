@@ -1,15 +1,21 @@
 // silicon - TLS client: 1.3 (RFC 8446, TLS_AES_128_GCM_SHA256) and 1.2 (RFC 5246,
 // ECDHE-RSA/ECDSA-AES128-GCM-SHA256), both with an X25519 key exchange.
-// NOTE: the server certificate is NOT verified (silicon has no CA store yet). Traffic is
-// encrypted, but a network attacker could impersonate the server.
+// The server's certificate chain is checked against a built-in root store (net/x509.cpp, net/roots.inc),
+// the host name must match, and the handshake signature (TLS 1.3 CertificateVerify, TLS 1.2 ServerKeyExchange)
+// must be made by the certificate's key. A site whose certificate fails can still be reached by pinning
+// that exact certificate with the `trust` command; `trust off` turns checking off altogether.
+// Not checked: revocation, key usage, name constraints.
 #include "net.h"
 #include "crypto.h"
+#include "x509.h"
+#include "../fs/fs.h"
+#include "../drv/drivers.h"
 
 struct TlsConn {
     int  sock;
     char host[128];
     int  phase;                  // 0 send hello, 1 wait server hello, 2 server handshake, 3 open, 4 (1.2) wait server finished, -1 failed
-    char err[96];
+    char err[200];
     u8   priv[32], pub[32];
     Sha256 transcript;
     u8   hs_secret[32], c_hs[32], s_hs[32], c_ap[32], s_ap[32];
@@ -21,11 +27,16 @@ struct TlsConn {
     u8*  hs;  u32 hs_len, hs_cap;          // handshake message reassembly
     u8*  app; u32 app_len, app_cap, app_rd;
     bool closed;
+    u8*  leaf; u32 leaf_len;       // the server certificate (DER)
+    bool checked;                 // the chain was verified (or pinned), so the handshake signature must be too
     // TLS 1.2
     bool v12;
+    bool v12_group;               // TLS 1.2 key exchange: false x25519, true P-256
     u8   crand[32], srand[32], master[48];
     bool have_ske;
-    u8   spub[32];
+    u8   spub[65];               // the server's ephemeral key (x25519: 32 bytes, P-256: 65)
+    u8   spub_len;
+    u8   p256priv[32];
 };
 
 static void grow(u8*& b, u32& cap, u32 need) {
@@ -39,6 +50,112 @@ static void tls_fail(TlsConn* t, const char* why) {
     if (t->phase != -1) klog("tls: %s\n", why);
     strlcpy(t->err, why, sizeof(t->err));
     t->phase = -1;
+}
+
+// ---------------------------------------------------------------- certificate checking
+static char last_host[128];
+static u8 last_fp[32];
+static bool last_valid = false;
+
+static void hex_of(const u8* d, int n, char* out) {
+    static const char* H = "0123456789abcdef";
+    for (int i = 0; i < n; i++) { out[i * 2] = H[d[i] >> 4]; out[i * 2 + 1] = H[d[i] & 15]; }
+    out[n * 2] = 0;
+}
+
+bool tls_verify_enabled() {
+    FsNode* f = fs_lookup("/home/.config/tls_verify");
+    if (!f || f->dir) return true;
+    return memcmp(fs_read_text(f), "off", 3) != 0;
+}
+void tls_verify_set(bool on) { fs_mkdirs("/home/.config"); fs_write_text("/home/.config/tls_verify", on ? "on\n" : "off\n"); }
+
+static bool pinned(const char* host, const u8 fp[32]) {
+    FsNode* f = fs_lookup("/home/.config/tls_trust");
+    if (!f || f->dir) return false;
+    char hex[65];
+    hex_of(fp, 32, hex);
+    const char* t = fs_read_text(f);
+    while (*t) {
+        const char* e = strchr(t, '\n');
+        int l = e ? (int)(e - t) : (int)strlen(t);
+        char line[220];
+        memcpy(line, t, min(l, 219));
+        line[min(l, 219)] = 0;
+        char* sp = strchr(line, ' ');
+        if (sp) { *sp = 0; if (!strcmp(line, host) && !strcmp(sp + 1, hex)) return true; }
+        if (!e) break;
+        t = e + 1;
+    }
+    return false;
+}
+
+// pin the certificate of the last connection to `host` that failed its check
+bool tls_trust_add(const char* host, char* msg, int n) {
+    if (!last_valid || strcmp(last_host, host)) { snprintf(msg, (size_t)n, "no refused certificate from %s to trust (try connecting first)", host); return false; }
+    char hex[65], line[220];
+    hex_of(last_fp, 32, hex);
+    snprintf(line, sizeof(line), "%s %s\n", host, hex);
+    fs_mkdirs("/home/.config");
+    FsNode* f = fs_create_path("/home/.config/tls_trust", false);
+    if (!f || !fs_append(f, line, (u32)strlen(line))) { snprintf(msg, (size_t)n, "can't save the list"); return false; }
+    snprintf(msg, (size_t)n, "pinned the certificate %.16s... for %s", hex, host);
+    return true;
+}
+bool tls_trust_remove(const char* host) {
+    FsNode* f = fs_lookup("/home/.config/tls_trust");
+    if (!f || f->dir) return false;
+    const char* t = fs_read_text(f);
+    char* out = (char*)kmalloc(strlen(t) + 2);
+    int o = 0;
+    bool removed = false;
+    while (*t) {
+        const char* e = strchr(t, '\n');
+        int l = e ? (int)(e - t) : (int)strlen(t);
+        int hl = (int)strlen(host);
+        if (l > hl && !memcmp(t, host, hl) && t[hl] == ' ') removed = true;
+        else { memcpy(out + o, t, l); o += l; out[o++] = '\n'; }
+        if (!e) break;
+        t = e + 1;
+    }
+    out[o] = 0;
+    fs_write_text("/home/.config/tls_trust", out);
+    kfree(out);
+    return removed;
+}
+
+// the list of certificates from a Certificate message: u24 length + certificate (+ u16 extensions in TLS 1.3), repeated
+static bool check_chain(TlsConn* t, const u8* list, u32 listlen, bool v13) {
+    const u8* certs[8];
+    u32 lens[8];
+    int n = 0;
+    u32 o = 0;
+    while (o + 3 <= listlen && n < 8) {
+        u32 cl = ((u32)list[o] << 16) | (list[o + 1] << 8) | list[o + 2];
+        o += 3;
+        if (o + cl > listlen) { tls_fail(t, "damaged certificate list"); return false; }
+        certs[n] = list + o; lens[n] = cl; n++;
+        o += cl;
+        if (v13) { if (o + 2 > listlen) break; o += 2 + (((u32)list[o] << 8) | list[o + 1]); }
+    }
+    if (!n || !lens[0]) { tls_fail(t, "the server sent no certificate"); return false; }
+    if (t->leaf) kfree(t->leaf);
+    t->leaf = (u8*)kmalloc(lens[0]);
+    memcpy(t->leaf, certs[0], lens[0]);
+    t->leaf_len = lens[0];
+    if (!tls_verify_enabled()) return true;
+    char err[110];
+    u8 fp[32];
+    t->checked = true;
+    if (x509_verify_chain(certs, lens, n, t->host, (i64)rtc_stamp(), err, sizeof(err), fp)) return true;
+    if (pinned(t->host, fp)) return true;
+    strlcpy(last_host, t->host, sizeof(last_host));
+    memcpy(last_fp, fp, 32);
+    last_valid = true;
+    char m[200];
+    snprintf(m, sizeof(m), "%s (to connect anyway: trust add %s)", err, t->host);
+    tls_fail(t, m);
+    return false;
 }
 
 static void set_keys(AesGcm& g, u8 iv[12], u64& seq, const u8 secret[32]) {
@@ -257,7 +374,32 @@ static void handle_encrypted_hs(TlsConn* t, const u8* m, u32 len) {
         t->phase = 3;
         return;
     }
-    // EncryptedExtensions, Certificate, CertificateVerify: just part of the transcript
+    if (type == 11) {                                // Certificate: request context, then the list
+        if (len >= 9 && 4 + 1 + m[4] + 3 <= len) {
+            u32 o = 5 + m[4];
+            u32 ll = ((u32)m[o] << 16) | (m[o + 1] << 8) | m[o + 2];
+            o += 3;
+            if (o + ll <= len) { if (!check_chain(t, m + o, ll, true)) return; }
+            else { tls_fail(t, "damaged certificate message"); return; }
+        } else { tls_fail(t, "damaged certificate message"); return; }
+    } else if (type == 15 && t->checked) {           // CertificateVerify: a signature over the transcript so far
+        u8 th[32];
+        t->transcript.final(th);
+        if (len < 8) { tls_fail(t, "damaged certificate verify"); return; }
+        u16 scheme = (u16)((m[4] << 8) | m[5]);
+        u32 sl = ((u32)m[6] << 8) | m[7];
+        PubKey pk;
+        u8 content[64 + 34 + 32];
+        memset(content, 0x20, 64);
+        memcpy(content + 64, "TLS 1.3, server CertificateVerify", 33);
+        content[97] = 0;
+        memcpy(content + 98, th, 32);
+        if (8 + sl > len || !t->leaf || !x509_public_key(t->leaf, t->leaf_len, &pk) || !x509_verify_tls_sig(pk, scheme, content, sizeof(content), m + 8, sl)) {
+            tls_fail(t, "the server couldn't prove it owns its certificate");
+            return;
+        }
+    }
+    // EncryptedExtensions, Certificate, CertificateVerify: part of the transcript
     t->transcript.update(m, len);
 }
 
@@ -275,16 +417,57 @@ static void handle_v12_hs(TlsConn* t, const u8* m, u32 len) {
     }
     if (type == 13) { tls_fail(t, "server wants a client certificate"); return; }
     t->transcript.update(m, len);
-    if (type == 12) {                               // ServerKeyExchange (the signature isn't checked)
-        if (len < 8 + 32 || m[4] != 3 || m[5] != 0 || m[6] != 0x1d || m[7] != 32) { tls_fail(t, "server wants a curve silicon lacks"); return; }
-        memcpy(t->spub, m + 8, 32);
+    if (type == 11) {                               // Certificate
+        if (len < 7) { tls_fail(t, "damaged certificate message"); return; }
+        u32 ll = ((u32)m[4] << 16) | (m[5] << 8) | m[6];
+        if (7 + ll > len) { tls_fail(t, "damaged certificate message"); return; }
+        check_chain(t, m + 7, ll, false);
+        return;
+    }
+    if (type == 12) {                               // ServerKeyExchange: curve, key, then a signature over both randoms and these
+        if (len < 8 || m[4] != 3) { tls_fail(t, "unsupported key exchange"); return; }
+        u32 grp = ((u32)m[5] << 8) | m[6], pl = m[7];
+        bool ok_curve = (grp == 0x001d && pl == 32) || (grp == 0x0017 && pl == 65 && len > 8 && m[8] == 4);
+        if (!ok_curve || 8 + pl > len) { tls_fail(t, "server wants a curve silicon lacks"); return; }
+        if (t->checked) {
+            if (len < 8 + pl + 4) { tls_fail(t, "damaged key exchange"); return; }
+            u16 scheme = (u16)((m[8 + pl] << 8) | m[9 + pl]);
+            u32 sl = ((u32)m[10 + pl] << 8) | m[11 + pl];
+            u8 signed_data[64 + 4 + 65];
+            memcpy(signed_data, t->crand, 32);
+            memcpy(signed_data + 32, t->srand, 32);
+            memcpy(signed_data + 64, m + 4, 4 + pl);
+            PubKey pk;
+            if (12 + pl + sl > len || !t->leaf || !x509_public_key(t->leaf, t->leaf_len, &pk) || !x509_verify_tls_sig(pk, scheme, signed_data, 64 + 4 + pl, m + 12 + pl, sl)) {
+                tls_fail(t, "the server couldn't prove it owns its certificate");
+                return;
+            }
+        }
+        t->v12_group = grp == 0x0017;
+        memcpy(t->spub, m + 8, pl);
+        t->spub_len = (u8)pl;
         t->have_ske = true;
         return;
     }
     if (type != 14) return;                         // ServerHelloDone: our turn
     if (!t->have_ske) { tls_fail(t, "server sent no key exchange (RSA key transport isn't supported)"); return; }
     u8 pms[32], seed[64], kb[40];
-    x25519(pms, t->priv, t->spub);
+    u8 cke[4 + 66];
+    u32 ckl;
+    if (t->v12_group) {                                                // secp256r1
+        bool nz = false;
+        while (!nz) { random_bytes(t->p256priv, 32); t->p256priv[0] &= 0x7F; for (int i = 0; i < 32; i++) nz |= t->p256priv[i] != 0; }
+        u8 pub[65];
+        if (!p256_public(t->p256priv, pub) || !p256_shared(t->p256priv, t->spub, pms)) { tls_fail(t, "the server's key exchange value is invalid"); return; }
+        cke[0] = 16; cke[1] = 0; cke[2] = 0; cke[3] = 66; cke[4] = 65;
+        memcpy(cke + 5, pub, 65);
+        ckl = 4 + 66;
+    } else {
+        x25519(pms, t->priv, t->spub);
+        cke[0] = 16; cke[1] = 0; cke[2] = 0; cke[3] = 33; cke[4] = 32;
+        memcpy(cke + 5, t->pub, 32);
+        ckl = 4 + 33;
+    }
     memcpy(seed, t->crand, 32);
     memcpy(seed + 32, t->srand, 32);
     prf(pms, 32, "master secret", seed, 64, t->master, 48);
@@ -292,11 +475,8 @@ static void handle_v12_hs(TlsConn* t, const u8* m, u32 len) {
     memcpy(seed + 32, t->crand, 32);
     prf(t->master, 48, "key expansion", seed, 64, kb, 40);
     // ClientKeyExchange
-    u8 cke[4 + 33];
-    cke[0] = 16; cke[1] = 0; cke[2] = 0; cke[3] = 33; cke[4] = 32;
-    memcpy(cke + 5, t->pub, 32);
-    t->transcript.update(cke, sizeof(cke));
-    send_record(t, 22, cke, sizeof(cke));
+    t->transcript.update(cke, ckl);
+    send_record(t, 22, cke, ckl);
     u8 ccs = 1;
     send_record(t, 20, &ccs, 1);
     t->wr.init(kb);
@@ -455,5 +635,6 @@ void tls_free(TlsConn* t) {
     if (t->in) kfree(t->in);
     if (t->hs) kfree(t->hs);
     if (t->app) kfree(t->app);
+    if (t->leaf) kfree(t->leaf);
     delete t;
 }
