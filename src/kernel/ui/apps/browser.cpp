@@ -45,10 +45,10 @@ static const char* ABOUT_PAGE =
     "<p>Beam is silicon's web browser. Everything under it is written from scratch for silicon:</p><ul>"
     "<li>the <b>RTL8139</b> network driver</li><li>ethernet, ARP, IPv4, ICMP, UDP, <b>DHCP</b> and <b>DNS</b></li>"
     "<li>a <b>TCP</b> stack with retransmission and flow control</li>"
-    "<li><b>TLS 1.2 and 1.3</b>: X25519, AES-128-GCM, SHA-256, HKDF</li><li>an HTTP/1.1 client (chunked, redirects)</li>"
+    "<li><b>TLS 1.2 and 1.3</b>: X25519 and P-256, AES-128-GCM, SHA-256, HKDF, X.509 certificate checking</li><li>an HTTP/1.1 client (chunked, redirects)</li>"
     "<li>an HTML layout engine with a CSS engine (selectors, cascade, @media, variables) and PNG / JPEG / GIF decoders</li><li>no JavaScript</li></ul>"
-    "<h3>please note</h3><p>HTTPS traffic is encrypted, but certificates are <b>not verified</b> yet, "
-    "so don't type anything secret into a web page.</p>"
+    "<h3>please note</h3><p>HTTPS certificates are checked against a built-in list of authorities (revocation is not checked). "
+    "A site that fails the check is refused; the <code>trust</code> command in a terminal can pin one you know is yours.</p>"
     "<p><a href=\"silicon://start\">back to the start page</a></p></body></html>";
 
 enum { B_BACK = 1, B_FWD, B_RELOAD, B_HOME, B_STOP, B_SOURCE, B_SAVE, B_BOOKMARK, B_BOOKMARKS, B_HISTORY, B_NEWWIN, B_CLOSE, B_IMAGES, B_CSS,
@@ -1043,7 +1043,7 @@ struct BeamTab : App {
         } else if (status[0]) strlcpy(st, status, sizeof(st));
         else if (int sp_ = sheets_pending()) snprintf(st, sizeof(st), "loading styles" G_ELLIP " %d to go", sp_);
         else if (int pend = images_pending()) snprintf(st, sizeof(st), "loading pictures" G_ELLIP " %d to go", pend);
-        else if (secure) snprintf(st, sizeof(st), "encrypted (%s, certificate not verified)  " G_BULLET "  %d links", tlsv[0] ? tlsv : "tls", doc.links.len);
+        else if (secure) snprintf(st, sizeof(st), "encrypted (%s, certificate %s)  " G_BULLET "  %d links", tlsv[0] ? tlsv : "tls", tls_verify_enabled() ? "checked" : "NOT checked", doc.links.len);
         else snprintf(st, sizeof(st), "%s  " G_BULLET "  %d links", str_ieq_prefix(url, "silicon:") ? "built-in page" : "not encrypted", doc.links.len);
         c.text_n(8, h - ST_H + 3, st, (w - 16) / 8, th::muted);
     }
