@@ -1,8 +1,9 @@
-// silicon - USB: a UHCI host controller (QEMU's piix3-usb-uhci), device enumeration and the
-// bulk-only mass storage class with SCSI read/write, so USB drives show up as block devices.
-// Everything is polled; transfers run through one queue head, a few TDs at a time.
+// silicon - USB: UHCI (USB 1, QEMU's piix3-usb-uhci) and xHCI (USB 3, qemu-xhci) host controllers, device
+// enumeration and the bulk-only mass storage class with SCSI read/write, so USB drives show up as
+// block devices. Everything is polled.
 #include "blk.h"
 #include "pci.h"
+#include "../arch/arch.h"
 
 // ---------------------------------------------------------------- block device registry
 static BlkDev devs[6];
@@ -39,6 +40,8 @@ static inline u16 r16(u16 off) { return inw(io + off); }
 
 struct UsbDev {
     bool used;
+    bool xhci;                                  // on the xHCI controller (else UHCI)
+    void* x;                                    // its XDev
     int port;
     u8 addr;
     u8 maxpkt0;
@@ -49,7 +52,7 @@ struct UsbDev {
     BlkDev* blk;
     u32 tag;
 };
-static UsbDev udev[2];
+static UsbDev udev[10];                   // 0-1: UHCI ports, 2-9: xHCI ports
 
 static u32 td_ctrl(bool lowspeed, bool spd) {
     return (1u << 23) | (3u << 27) | (lowspeed ? (1u << 26) : 0) | (spd ? (1u << 29) : 0);
@@ -156,15 +159,24 @@ static int bulk(UsbDev* d, bool in, void* data, u32 len) {
     return total;
 }
 
+#include "xhci.inc"
+
+// control and bulk transfers on whichever controller the device hangs off
+static int dctl(UsbDev* d, u8 type, u8 req, u16 val, u16 idx, u16 len, void* data, bool in) {
+    return d->xhci ? xhci_control(d, type, req, val, idx, len, data, in) : control(d->addr, d->maxpkt0, d->lowspeed, type, req, val, idx, len, data, in);
+}
+static int dbulk(UsbDev* d, bool in, void* data, u32 len) { return d->xhci ? xhci_bulk(d, in, data, len) : bulk(d, in, data, len); }
+
 // ---------------------------------------------------------------- mass storage (bulk-only, SCSI)
 struct __attribute__((packed)) Cbw { u32 sig, tag, len; u8 flags, lun, cblen; u8 cb[16]; };
 struct __attribute__((packed)) Csw { u32 sig, tag, residue; u8 status; };
 
 // bulk-only reset recovery: reset the interface, clear both endpoints' halt, restart the data toggles
 static void recover(UsbDev* d) {
-    control(d->addr, d->maxpkt0, d->lowspeed, 0x21, 0xFF, 0, 0, 0, nullptr, false);
-    control(d->addr, d->maxpkt0, d->lowspeed, 0x02, 1, 0, d->ep_in | 0x80, 0, nullptr, false);
-    control(d->addr, d->maxpkt0, d->lowspeed, 0x02, 1, 0, d->ep_out, 0, nullptr, false);
+    dctl(d, 0x21, 0xFF, 0, 0, 0, nullptr, false);
+    dctl(d, 0x02, 1, 0, d->ep_in | 0x80, 0, nullptr, false);
+    dctl(d, 0x02, 1, 0, d->ep_out, 0, nullptr, false);
+    if (d->xhci) xhci_recover(d);
     d->tog_in = d->tog_out = 0;
 }
 
@@ -177,11 +189,11 @@ static bool scsi_once(UsbDev* d, const u8* cdb, int cdblen, void* data, u32 len,
     cbw.flags = in ? 0x80 : 0;
     cbw.cblen = (u8)cdblen;
     memcpy(cbw.cb, cdb, cdblen);
-    if (bulk(d, false, &cbw, 31) != 31) { klog("usb: cbw failed\n"); return false; }
-    if (len && bulk(d, in, data, len) < 0) { klog("usb: data stage failed (%u bytes)\n", len); d->tog_in = d->tog_out = 0; return false; }
+    if (dbulk(d, false, &cbw, 31) != 31) { klog("usb: cbw failed\n"); return false; }
+    if (len && dbulk(d, in, data, len) < 0) { klog("usb: data stage failed (%u bytes)\n", len); d->tog_in = d->tog_out = 0; return false; }
     Csw csw;
     memset(&csw, 0, sizeof(csw));
-    int cr = bulk(d, true, &csw, 13);
+    int cr = dbulk(d, true, &csw, 13);
     if (cr != 13 || csw.sig != 0x53425355 || csw.tag != cbw.tag) { klog("usb: csw bad (%d, sig %x)\n", cr, csw.sig); return false; }
     return csw.status == 0;
 }
@@ -233,9 +245,12 @@ static bool port_reset(int port) {
 
 static void remove_dev(UsbDev& d) {
     if (d.blk) { d.blk->present = false; blk_changed(); klog("usb: %s removed\n", d.blk->name); }
+    if (d.xhci) xhci_release(&d);
     d.used = false;
     d.blk = nullptr;
 }
+
+static bool identify(UsbDev& d, int idx);
 
 static bool enumerate(int port) {
     UsbDev& d = udev[port];
@@ -250,12 +265,30 @@ static bool enumerate(int port) {
     d.addr = (u8)(port + 1);
     if (control(0, d.maxpkt0, d.lowspeed, 0x00, 5, d.addr, 0, 0, nullptr, false) < 0) { klog("usb: set address failed\n"); return false; }
     sleep_ms(10);
-    if (control(d.addr, d.maxpkt0, d.lowspeed, 0x80, 6, 0x0100, 0, 18, desc, true) < 18) return false;
+    return identify(d, port);
+}
+
+// xHCI: the controller resets the port and addresses the device for us
+static bool enumerate_x(int p) {
+    UsbDev& d = udev[2 + p];
+    memset(&d, 0, sizeof(d));
+    d.port = p;
+    d.xhci = true;
+    if (!xhci_address(&d, p)) { if (d.x) xhci_release(&d); return false; }
+    if (!identify(d, 2 + p)) { xhci_release(&d); return false; }
+    return true;
+}
+
+// from the device descriptor on, the same for every controller: find the bulk endpoints, set the
+// configuration, wait for the medium and register a block device
+static bool identify(UsbDev& d, int idx) {
+    u8 desc[64];
+    if (dctl(&d, 0x80, 6, 0x0100, 0, 18, desc, true) < 18) return false;
     u16 vid = desc[8] | (desc[9] << 8), pid = desc[10] | (desc[11] << 8);
     u8 cfg[256];
-    if (control(d.addr, d.maxpkt0, d.lowspeed, 0x80, 6, 0x0200, 0, 9, cfg, true) < 9) return false;
+    if (dctl(&d, 0x80, 6, 0x0200, 0, 9, cfg, true) < 9) return false;
     u16 total = min<u16>(cfg[2] | (cfg[3] << 8), sizeof(cfg));
-    if (control(d.addr, d.maxpkt0, d.lowspeed, 0x80, 6, 0x0200, 0, total, cfg, true) < 9) return false;
+    if (dctl(&d, 0x80, 6, 0x0200, 0, total, cfg, true) < 9) return false;
     bool msc = false;
     for (u32 o = 9; o + 2 <= total;) {
         u8 l = cfg[o], t = cfg[o + 1];
@@ -270,7 +303,8 @@ static bool enumerate(int port) {
         o += l;
     }
     if (!d.ep_in || !d.ep_out) { klog("usb: device %04x:%04x is not a mass storage drive\n", vid, pid); return false; }
-    if (control(d.addr, d.maxpkt0, d.lowspeed, 0x00, 9, cfg[5], 0, 0, nullptr, false) < 0) return false;
+    if (d.xhci && !xhci_configure(&d)) return false;
+    if (dctl(&d, 0x00, 9, cfg[5], 0, 0, nullptr, false) < 0) return false;
     u8 inq[36];
     memset(inq, 0, sizeof(inq));
     u8 c_inq[6] = {0x12, 0, 0, 0, 36, 0};
@@ -288,7 +322,7 @@ static bool enumerate(int port) {
     u32 bs = ((u32)cap[4] << 24) | (cap[5] << 16) | (cap[6] << 8) | cap[7];
     if (bs != 512) { klog("usb: %u byte sectors are not supported\n", bs); return false; }
     char name[12];
-    snprintf(name, sizeof(name), "usb%d", port);
+    snprintf(name, sizeof(name), "usb%d", idx);
     BlkDev* b = blk_add(name);
     if (!b) return false;
     b->sectors = (u64)last + 1;
@@ -313,7 +347,7 @@ static bool enumerate(int port) {
     return true;
 }
 
-int usb_port_count() { return have_hc ? 2 : 0; }
+int usb_port_count() { return (have_hc ? 2 : 0) + (have_xhci ? xports : 0); }
 
 void usb_init() {
     if (!pci_count()) pci_scan();
@@ -325,7 +359,14 @@ void usb_init() {
             if (pi == 0x00 && (p->bar[4] & 1)) { hc = p; break; }
         }
     }
-    if (!hc) { klog("usb: no UHCI controller\n"); return; }
+    for (int i = 0; i < pci_count(); i++) {
+        PciDevice* p = pci_get(i);
+        if (p->cls == 0x0C && p->subcls == 0x03 && ((pci_read(p->bus, p->dev, p->fn, 8) >> 8) & 0xFF) == 0x30) {
+            have_xhci = xhci_start(p);
+            break;
+        }
+    }
+    if (!hc) { klog("usb: no UHCI controller\n"); if (have_xhci) usb_poll(); return; }
     io = (u16)(hc->bar[4] & ~3u);
     pci_enable_bus_master(hc);
     pci_write(hc->bus, hc->dev, hc->fn, 0xC0, 0x8F00);          // legacy support off
@@ -355,12 +396,30 @@ void usb_init() {
     usb_poll();
 }
 
+static void xhci_poll() {
+    static u64 xretry[XMAXDEV];
+    for (int p = 0; p < xports; p++) {
+        u32 sc = xportsc(p);
+        bool connected = sc & 1;
+        UsbDev& d = udev[2 + p];
+        if (!connected && d.used) remove_dev(d);
+        else if (connected && !d.used && ticks() >= xretry[p]) {
+            if (!enumerate_x(p)) { xretry[p] = ticks() + 5000; d.used = false; }
+        }
+        if (sc & PORT_CHANGES) xportsc_set(p, PORT_CHANGES);
+    }
+    Trb ev;
+    while (ev_next(&ev)) {}                                    // port status events: nothing to do, the ports are polled
+}
+
 void usb_poll() {
-    if (!have_hc) return;
+    if (!have_hc && !have_xhci) return;
     static u64 last = 0;
     static u64 retry[2];
     if (ticks() - last < 250) return;
     last = ticks();
+    if (have_xhci) xhci_poll();
+    if (!have_hc) return;
     for (int port = 0; port < 2; port++) {
         u16 st = r16(0x10 + port * 2);
         bool connected = st & 1;

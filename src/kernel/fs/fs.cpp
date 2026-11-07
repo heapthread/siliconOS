@@ -60,6 +60,7 @@ static FsNode* new_node(const char* name, bool dir) {
 
 // ---------------------------------------------------------------- permissions
 bool fs_allowed(FsNode* n, int want) {
+    if (n && (want & 2) && n->fat_vol) { FatVol* v = fat_vol_by_id(n->fat_vol); if (v && fat_readonly(v)) return false; }   // read-only drives (exFAT)
     if (!n || fs_uid == FS_UID_ROOT) return true;
     int bits = n->uid == fs_uid ? (n->mode >> 6) & 7 : (n->mode | (n->mode >> 3)) & 7;
     return (bits & want) == want;

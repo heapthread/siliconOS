@@ -1,4 +1,4 @@
-// silicon - FAT12 / FAT16 / FAT32 (see fat.h)
+// silicon - FAT12 / FAT16 / FAT32, and exFAT (read-only) (see fat.h)
 #include "fat.h"
 #include "../text.h"
 #include "../drv/drivers.h"
@@ -13,7 +13,8 @@ struct FatVol {
     int id;
     BlkDev* dev;
     u32 part_lba, spc, reserved, nfats, fat_sectors, root_cluster, root_dir_sector, root_dir_sectors, data_start, clusters;
-    int type;                                    // 16 or 32
+    int type;                                    // 12, 16, 32, or 64 for exFAT
+    u32 free_cl;                                 // exFAT: free clusters, counted at mount
     u32* fat;
     u8* fat_dirty;                               // one flag per FAT sector
     u32 hint;
@@ -35,7 +36,7 @@ static inline void wr32(u8* p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] 
 FatVol* fat_vol_by_id(int id) { return id >= 1 && id <= 4 ? vols[id - 1] : nullptr; }
 bool fat_readonly(FatVol* v) { return v->ro; }
 bool fat_dirty(FatVol* v) { return v->dirty || v->dels.len || v->to_free.len; }
-const char* fat_type_name(FatVol* v) { return v->type == 32 ? "FAT32" : v->type == 16 ? "FAT16" : "FAT12"; }
+const char* fat_type_name(FatVol* v) { return v->type == 64 ? "exFAT" : v->type == 32 ? "FAT32" : v->type == 16 ? "FAT16" : "FAT12"; }
 
 static bool dread(FatVol* v, u32 sector, u32 count, void* buf) { return v->dev->read(v->dev, (u64)v->part_lba + sector, count, buf); }
 static bool dwrite(FatVol* v, u32 sector, u32 count, const void* buf) { return v->dev->write(v->dev, (u64)v->part_lba + sector, count, buf); }
@@ -70,8 +71,8 @@ static void fat_set(FatVol* v, u32 c, u32 val) {
     if (sec2 < v->fat_sectors) v->fat_dirty[sec2] = 1;
     v->dirty = true;
 }
-static bool is_eoc(FatVol* v, u32 c) { return c >= (v->type == 32 ? 0x0FFFFFF8u : v->type == 16 ? 0xFFF8u : 0xFF8u); }
-static u32 eoc(FatVol* v) { return v->type == 32 ? 0x0FFFFFFFu : v->type == 16 ? 0xFFFFu : 0xFFFu; }
+static bool is_eoc(FatVol* v, u32 c) { return c >= (v->type == 64 ? 0xFFFFFFF7u : v->type == 32 ? 0x0FFFFFF8u : v->type == 16 ? 0xFFF8u : 0xFF8u); }
+static u32 eoc(FatVol* v) { return v->type == 64 ? 0xFFFFFFFFu : v->type == 32 ? 0x0FFFFFFFu : v->type == 16 ? 0xFFFFu : 0xFFFu; }
 
 static u32 alloc_cluster(FatVol* v) {
     for (u32 n = 0; n < v->clusters; n++) {
@@ -275,6 +276,41 @@ static void import_dir(FatVol* v, FsNode* node, u32 cluster, int depth) {
     ents.free();
 }
 
+// ---------------------------------------------------------------- partitions and exFAT
+static inline u64 rd64(const u8* p) { return (u64)rd32(p) | ((u64)rd32(p + 4) << 32); }
+static bool is_exfat_boot(const u8* s) { return s[510] == 0x55 && s[511] == 0xAA && !memcmp(s + 3, "EXFAT   ", 8); }
+
+// candidate partition start sectors, from an MBR or a GPT (basic data partitions)
+static int partition_candidates(BlkDev* dev, const u8* sec0, u32* out, int max) {
+    int n = 0;
+    bool gpt = false;
+    if (sec0[510] == 0x55 && sec0[511] == 0xAA)
+        for (int p = 0; p < 4 && n < max; p++) {
+            const u8* pe = sec0 + 446 + p * 16;
+            u8 t = pe[4];
+            if (t == 0xEE) gpt = true;
+            else if (t && t != 0x05 && t != 0x0F && rd32(pe + 8)) out[n++] = rd32(pe + 8);
+        }
+    if (gpt) {
+        u8 hdr[512];
+        if (dev->read(dev, 1, 1, hdr) && !memcmp(hdr, "EFI PART", 8)) {
+            u64 lba = rd64(hdr + 72);
+            u32 count = rd32(hdr + 80), esz = rd32(hdr + 84);
+            static const u8 BASIC[16] = {0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7};
+            u8 ents[512];
+            for (u32 i = 0; i < count && i < 32 && esz >= 128 && n < max; i++) {
+                u32 off = i * esz;
+                if (!dev->read(dev, lba + off / 512, 1, ents)) break;
+                const u8* e = ents + (off % 512);
+                if (!memcmp(e, BASIC, 16) && rd64(e + 32) < 0xFFFFFFFFull) out[n++] = (u32)rd64(e + 32);
+            }
+        }
+    }
+    return n;
+}
+
+static FatVol* exfat_mount(FatVol* v, const u8* sec, FsNode* mount_point, int slot, char* label_out, char* err, int errlen);
+
 FatVol* fat_mount(BlkDev* dev, FsNode* mount_point, char* label_out, char* err, int errlen) {
     int slot = -1;
     for (int i = 0; i < 4; i++) if (!vols[i]) { slot = i; break; }
@@ -284,15 +320,20 @@ FatVol* fat_mount(BlkDev* dev, FsNode* mount_point, char* label_out, char* err, 
     v->dev = dev;
     if (!dev->read(dev, 0, 1, sec)) { snprintf(err, errlen, "can't read the drive"); delete v; return nullptr; }
     auto is_bpb = [](const u8* s) { return s[510] == 0x55 && s[511] == 0xAA && rd16(s + 11) == 512 && s[13] && !(s[13] & (s[13] - 1)) && s[16] > 0; };
+    if (is_exfat_boot(sec)) return exfat_mount(v, sec, mount_point, slot, label_out, err, errlen);
     if (!is_bpb(sec)) {
         if (sec[510] != 0x55 || sec[511] != 0xAA) { snprintf(err, errlen, "no file system found"); delete v; return nullptr; }
+        u32 cand[12];
+        int nc = partition_candidates(dev, sec, cand, 12);
         u32 lba = 0;
-        for (int p = 0; p < 4; p++) {
-            const u8* pe = sec + 446 + p * 16;
-            u8 t = pe[4];
-            if (t == 0x0B || t == 0x0C || t == 0x0E || t == 0x06 || t == 0x04 || t == 0x01) { lba = rd32(pe + 8); break; }
+        bool found = false;
+        for (int i = 0; i < nc && !found; i++) {
+            u8 test[512];
+            if (!dev->read(dev, cand[i], 1, test)) continue;
+            if (is_exfat_boot(test)) { v->part_lba = cand[i]; return exfat_mount(v, test, mount_point, slot, label_out, err, errlen); }
+            if (is_bpb(test)) { lba = cand[i]; memcpy(sec, test, 512); found = true; }
         }
-        if (!lba || !dev->read(dev, lba, 1, sec) || !is_bpb(sec)) { snprintf(err, errlen, "no FAT partition found"); delete v; return nullptr; }
+        if (!found) { snprintf(err, errlen, nc ? "no FAT or exFAT partition found" : "no file system found"); delete v; return nullptr; }
         v->part_lba = lba;
     }
     v->spc = sec[13];
@@ -361,6 +402,158 @@ FatVol* fat_mount(BlkDev* dev, FsNode* mount_point, char* label_out, char* err, 
     v->dirty = false;
     strlcpy(label_out, v->label, 12);
     klog("fat: mounted %s (%s, %u clusters of %u bytes), label '%s'\n", dev->name, fat_type_name(v), v->clusters, csize(v), v->label);
+    return v;
+}
+
+// ---------------------------------------------------------------- exFAT (read-only)
+static bool exfat_read(FatVol* v, u32 first, u64 bytes, bool contiguous, u8* out) {
+    if (!bytes) return true;
+    if (first < 2) return false;
+    if (!contiguous) return read_chain(v, first, out, (u32)bytes);
+    u32 secs = (u32)((bytes + 511) / 512);
+    u8* tmp = (u8*)kmalloc_try(secs * 512ull);
+    if (!tmp) return false;
+    bool ok = dread(v, csector(v, first), secs, tmp);
+    if (ok) memcpy(out, tmp, (size_t)bytes);
+    kfree(tmp);
+    return ok;
+}
+
+static bool exfat_dir_load(FatVol* v, u32 first, u64 dlen, bool contiguous, u8** out, u32* len) {
+    if (!contiguous) return dir_load(v, first, out, len);
+    u32 cs = csize(v);
+    *len = (u32)((dlen + cs - 1) / cs * cs);
+    if (!*len || *len > (16u << 20)) return false;
+    *out = (u8*)kmalloc_try(*len + 32);
+    return *out && dread(v, csector(v, first), *len / 512, *out);
+}
+
+static void exfat_import_dir(FatVol* v, FsNode* node, u32 first, u64 dlen, bool contiguous, int depth, bool is_root) {
+    u8* raw = nullptr;
+    u32 len = 0;
+    if (!exfat_dir_load(v, first, dlen, contiguous, &raw, &len)) { klog("exfat: unreadable directory %u\n", first); return; }
+    for (u32 i = 0; i + 32 <= len && raw[i];) {
+        u8 type = raw[i];
+        if (type == 0x83 && is_root) {                                          // volume label
+            u32 n = min<u32>(raw[i + 1], 11);
+            u16 ch[11];
+            for (u32 k = 0; k < n; k++) ch[k] = (u16)rd16(raw + i + 2 + k * 2);
+            utf16_to_name(ch, (int)n, v->label);
+        }
+        if (type != 0x85) { i += 32; continue; }
+        u32 secn = raw[i + 1];
+        if (secn < 2 || i + 32 * (secn + 1) > len || raw[i + 32] != 0xC0) { i += 32; continue; }
+        u32 attr = rd16(raw + i + 4);
+        u32 mt = rd32(raw + i + 12);
+        const u8* st = raw + i + 32;
+        bool nofat = (st[1] & 2) != 0;
+        u32 nlen = st[3];
+        u64 vlen = rd64(st + 8), dl = rd64(st + 24);
+        u32 fc = rd32(st + 20);
+        u16 nm16[256];
+        u32 got = 0;
+        for (u32 k = 2; k <= secn && got < nlen && got + 15 <= 255; k++) {
+            const u8* e = raw + i + 32 * k;
+            if (e[0] != 0xC1) break;
+            for (u32 j = 0; j < 15 && got < nlen; j++) nm16[got++] = (u16)rd16(e + 2 + j * 2);
+        }
+        i += 32 * (secn + 1);
+        char nm0[FS_NAME_MAX * 2], nm[FS_NAME_MAX];
+        utf16_to_name(nm16, (int)got, nm0);
+        fs_unique_name(node, nm0, nm, sizeof(nm));
+        if (!fs_valid_name(nm)) continue;
+        bool isdir = (attr & 0x10) != 0;
+        FsNode* n = fs_create(node, nm, isdir);
+        if (!n) continue;
+        n->fat_vol = (u8)v->id;
+        n->fat_first = fc;
+        n->fat_state = FAT_SYNCED;
+        u32 st_ts = fat_to_stamp(mt >> 16, mt & 0xFFFF);
+        if (st_ts) n->mtime = n->ctime = st_ts;
+        if (isdir) {
+            if (depth < 24 && fc >= 2) exfat_import_dir(v, n, fc, dl, nofat, depth + 1, false);
+            continue;
+        }
+        u64 size = min(vlen, dl);
+        if (size > MAX_FILE || v->imported + size > MAX_IMPORT) { n->fat_state = FAT_OVERSIZE; continue; }
+        if (size && fc >= 2) {
+            u8* buf = (u8*)kmalloc_try((u32)size + 512);
+            if (!buf) { n->fat_state = FAT_OVERSIZE; continue; }
+            if (exfat_read(v, fc, size, nofat, buf)) { fs_write(n, buf, (u32)size); n->fat_state = FAT_SYNCED; if (st_ts) n->mtime = st_ts; v->imported += (u32)size; }
+            else n->fat_state = FAT_OVERSIZE;
+            kfree(buf);
+        }
+    }
+    kfree(raw);
+}
+
+static FatVol* exfat_mount(FatVol* v, const u8* sec, FsNode* mount_point, int slot, char* label_out, char* err, int errlen) {
+    BlkDev* dev = v->dev;
+    if (sec[108] != 9) { snprintf(err, errlen, "exFAT with %u byte sectors isn't supported", 1u << sec[108]); delete v; return nullptr; }
+    v->type = 64;
+    v->spc = 1u << sec[109];
+    v->nfats = sec[110];
+    u32 fat_off = rd32(sec + 80), fat_len = rd32(sec + 84);
+    v->data_start = rd32(sec + 88);
+    v->clusters = rd32(sec + 92);
+    v->root_cluster = rd32(sec + 96);
+    v->fat_sectors = fat_len;
+    v->reserved = fat_off;
+    if (!v->clusters || v->clusters > 0x0FFFFFF0 || (v->clusters + 2ull) * 4 > (96ull << 20) || v->spc > 4096 || v->root_cluster < 2) {
+        snprintf(err, errlen, "drive too large or damaged"); delete v; return nullptr;
+    }
+    u32 entries = v->clusters + 2;
+    v->fat = (u32*)kmalloc_try(entries * 4 + 16);
+    if (!v->fat) { snprintf(err, errlen, "out of memory"); delete v; return nullptr; }
+    memset(v->fat, 0, entries * 4);
+    u8* chunk = (u8*)kmalloc_try(64 * 512);
+    if (!chunk) { snprintf(err, errlen, "out of memory"); kfree(v->fat); delete v; return nullptr; }
+    for (u32 s = 0; s < fat_len && (u64)s * 128 < entries; s += 64) {
+        u32 n = min<u32>(64, fat_len - s);
+        if (!dread(v, fat_off + s, n, chunk)) { snprintf(err, errlen, "can't read the FAT"); kfree(chunk); kfree(v->fat); delete v; return nullptr; }
+        for (u32 k = 0; k < n * 128; k++) {
+            u32 c = s * 128 + k;
+            if (c >= entries) break;
+            v->fat[c] = rd32(chunk + k * 4);
+        }
+    }
+    kfree(chunk);
+    v->fat_dirty = (u8*)kcalloc_try(2);
+    strlcpy(v->label, "EXFAT", sizeof(v->label));
+    v->id = slot + 1;
+    v->root = mount_point;
+    vols[slot] = v;
+    mount_point->fat_vol = (u8)v->id;
+    mount_point->fat_first = v->root_cluster;
+    mount_point->fat_state = FAT_SYNCED;
+    mount_point->mount = (u8)v->id;
+    // free space from the allocation bitmap
+    {
+        u8* raw = nullptr;
+        u32 len = 0;
+        if (dir_load(v, v->root_cluster, &raw, &len)) {
+            for (u32 i = 0; i + 32 <= len && raw[i]; i += 32)
+                if (raw[i] == 0x81) {
+                    u32 bc = rd32(raw + i + 20);
+                    u64 bl = rd64(raw + i + 24);
+                    if (bl && bl < (16u << 20) && bc >= 2) {
+                        u8* bm = (u8*)kmalloc_try((u32)bl + 512);
+                        if (bm && exfat_read(v, bc, bl, true, bm)) {
+                            u32 used = 0;
+                            for (u32 c = 0; c < v->clusters; c++) if (bm[c >> 3] & (1 << (c & 7))) used++;
+                            v->free_cl = v->clusters - used;
+                        }
+                        if (bm) kfree(bm);
+                    }
+                }
+            kfree(raw);
+        }
+    }
+    exfat_import_dir(v, mount_point, v->root_cluster, 0, false, 0, true);     // the volume is writable until the import is done
+    v->ro = true;                                                              // exFAT can be read but not changed
+    v->dirty = false;
+    strlcpy(label_out, v->label, 12);
+    klog("exfat: mounted %s (%u clusters of %u bytes), label '%s', read-only\n", dev->name, v->clusters, csize(v), v->label);
     return v;
 }
 
@@ -700,6 +893,7 @@ void fat_unmount(FatVol* v, bool write_back) {
 
 u32 fat_total_kb(FatVol* v) { return v->clusters * csize(v) / 1024; }
 u32 fat_free_kb(FatVol* v) {
+    if (v->type == 64) return v->free_cl * (csize(v) / 1024);
     u32 f = 0;
     for (u32 c = 2; c < v->clusters + 2; c++) if (!v->fat[c]) f++;
     return f * csize(v) / 1024;

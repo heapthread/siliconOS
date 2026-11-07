@@ -303,6 +303,7 @@ def qemu_cmd(headless=False):
         cmd += ["-accel", a]
     cmd += [
            "-device", "piix3-usb-uhci,id=uhci",
+           "-device", "qemu-xhci,id=xhci",
            "-drive", f"file={IMG},format=raw,if=ide,index=0",
            "-vga", "none", "-device", vga_device(headless), "-rtc", "base=localtime",
            "-netdev", "user,id=net0", "-device", "rtl8139,netdev=net0",
@@ -311,10 +312,11 @@ def qemu_cmd(headless=False):
            "-serial", "chardev:bridge",
            "-audiodev", audio_arg(audio) + ",id=snd0", "-device", "AC97,audiodev=snd0",
            "-machine", "pc,pcspk-audiodev=snd0"]
-    # SILICON_USB_IMG=file.img plugs that disk image in as a USB drive at start (more can be hot-plugged from the monitor)
+    # SILICON_USB_IMG=file.img plugs that disk image in as a USB drive at start (SILICON_USB_BUS=xhci puts it on the USB 3
+    # controller instead of the USB 1 one; more can be hot-plugged from the monitor)
     usb_img = os.environ.get("SILICON_USB_IMG")
     if usb_img:
-        cmd += ["-drive", f"if=none,id=usbd0,format=raw,file={usb_img}", "-device", "usb-storage,bus=uhci.0,drive=usbd0,id=usbdev0"]
+        cmd += ["-drive", f"if=none,id=usbd0,format=raw,file={usb_img}", "-device", f"usb-storage,bus={os.environ.get('SILICON_USB_BUS', 'uhci')}.0,drive=usbd0,id=usbdev0"]
     if not headless:
         disp = os.environ.get("SILICON_DISPLAY", "sdl,gl=off" if os.name == "nt" and "whpx" in accel else "")
         if disp:
