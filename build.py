@@ -129,6 +129,30 @@ def step_generated():
             if srcs and newer(out, udeps + srcs):
                 print(f"[uapp] {name}")
                 run([sys.executable, ubuild, "-o", out] + srcs)
+    # the Win32 runtime (sdk/win32) and the Windows test programs it is shipped with (tests/win32)
+    w32 = os.path.join(ROOT, "sdk", "win32")
+    if os.path.isdir(w32):
+        out = os.path.join(GEN, "uapp", "win32run.uapp")
+        deps = walk(w32, {".cpp", ".h", ".py"}) + walk(os.path.join(ROOT, "sdk", "user"), {".cpp", ".h"})
+        if newer(out, deps):
+            print("[win32run] runtime")
+            run([sys.executable, os.path.join(w32, "build.py"), "-o", out])
+    tests = os.path.join(ROOT, "tests", "win32")
+    if os.path.isdir(tests):
+        wcc = shutil.which("x86_64-w64-mingw32-g++") or shutil.which("g++")
+        exe_dir = os.path.join(GEN, "exe")
+        os.makedirs(exe_dir, exist_ok=True)
+        for name in sorted(os.listdir(tests)):
+            d = os.path.join(tests, name)
+            if not os.path.isdir(d):
+                continue
+            srcs = walk(d, {".cpp", ".c"})
+            exe = os.path.join(exe_dir, name + ".exe")
+            flags_file = os.path.join(d, "flags.txt")
+            flags = open(flags_file).read().split() if os.path.exists(flags_file) else []
+            if srcs and newer(exe, srcs + walk(d, {".h", ".txt", ".rc"})):
+                print(f"[exe] {name}")
+                run([wcc, "-O2", "-o", exe] + srcs + flags)
     assets = os.path.join(ROOT, "tools", "assets.py")
     if os.path.exists(assets):
         run([sys.executable, assets, GEN])

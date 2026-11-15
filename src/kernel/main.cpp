@@ -192,6 +192,8 @@ static void terminal_loop() {
     }
 }
 
+void win32_install_samples();
+
 extern "C" void kmain(BootInfo* bi) {
     serial_init();
     klog("\nsilicon " SILICON_VERSION " booting\n");
@@ -210,6 +212,7 @@ extern "C" void kmain(BootInfo* bi) {
     fs_init();
     settings_load();
     fs_uid = FS_UID_USER;                       // from here on the shell, the apps and user programs are the signed-in user
+    win32_install_samples();                    // Windows test programs for win32run (term/proc_cmds.cpp)
     display_refresh_from_settings();
     int boot_target = firmware_boot();          // POST, setup (DEL/F2), boot menu (F12)
     splash("waking up the silicon", 30);

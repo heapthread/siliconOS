@@ -970,6 +970,7 @@ void cmd_blkdump(Shell&, int, char**);
 void cmd_ping6(Shell&, int, char**);
 void cmd_kill(Shell&, int, char**);
 void cmd_run(Shell&, int, char**);
+void cmd_win32run(Shell&, int, char**);
 void cmd_nslookup(Shell&, int, char**);
 void cmd_curl(Shell&, int, char**);
 void cmd_wget(Shell&, int, char**);
@@ -1047,6 +1048,7 @@ const Command commands[] = {
     {"ps", "", "list running programs", cmd_ps},
     {"kill", "<pid>", "end a program", cmd_kill},
     {"run", "<program.uapp>", "start a user program (ring 3)", cmd_run},
+    {"win32run", "<program.exe> [args]", "run a Windows program", cmd_win32run},
     {"nslookup", "<host>", "look up an address (DNS)", cmd_nslookup},
     {"curl", "[-I] [-o f] <url>", "fetch a web page", cmd_curl},
     {"wget", "[-O f] <url>", "download a file", cmd_wget},

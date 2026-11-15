@@ -116,6 +116,7 @@ const char* file_icon_name(const char* name, bool dir, bool has_children) {
 }
 
 void uapp_run(const char* path);
+void win32_run(const char* path);
 void open_path(const char* path) {
     FsNode* n = fs_lookup(path);
     if (!n) { ui_notify("Not found", path, "file"); return; }
@@ -134,6 +135,7 @@ void open_path(const char* path) {
     if (media_is_media_name(n->name)) { launch("__new__", "media"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (str_icontains(n->name, ".ics")) { launch("__new__", "calendar"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (str_icontains(n->name, ".uapp")) { uapp_run(path); return; }
+    if (n->size > 2 && n->data[0] == 'M' && n->data[1] == 'Z') { win32_run(path); return; }       // a Windows program (.exe)
     if (str_icontains(n->name, ".sapp")) { App* a = new_module(path); Window* w = wm_open(a, a->pref_w(), a->pref_h()); w->resizable = a->resizable(); return; }
     if (is_pdf_name(n->name)) { launch("__new__", "pdfview"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }
     if (is_image_name(n->name)) { launch("__new__", "photos"); Window* w = wm_focused(); if (w) w->app->open_arg(path); return; }

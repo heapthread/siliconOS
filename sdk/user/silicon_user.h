@@ -26,7 +26,7 @@ typedef unsigned int   u32;
 typedef unsigned long long u64;
 typedef long long word;                  // a machine word (long is 32 bits with this toolchain)
 
-enum EventType { EV_NONE, EV_KEY, EV_MOUSE, EV_CLOSE, EV_RESIZE };
+enum EventType { EV_NONE, EV_KEY, EV_MOUSE, EV_CLOSE, EV_RESIZE, EV_USER };
 enum MouseKind { MOUSE_MOVE, MOUSE_DOWN, MOUSE_UP, MOUSE_DOUBLE, MOUSE_WHEEL, MOUSE_LEAVE };
 enum Key { KEY_BACKSPACE = 8, KEY_TAB = 9, KEY_ENTER = 10, KEY_ESC = 27,
            KEY_UP = 0x100, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END, KEY_PGUP, KEY_PGDN, KEY_INSERT, KEY_DELETE };
@@ -48,7 +48,11 @@ static inline word sys(word n, word a1 = 0, word a2 = 0, word a3 = 0, word a4 = 
 enum { S_EXIT = 0, S_YIELD = 1, S_SLEEP = 2, S_TICKS = 3, S_LOG = 4, S_GETPID = 5, S_RAND = 6,
        S_WIN_OPEN = 10, S_WIN_PRESENT = 11, S_WIN_TITLE = 12, S_WIN_EVENT = 13, S_WIN_SIZE = 14, S_GFX = 20,
        S_FILE_READ = 30, S_FILE_WRITE = 31, S_FILE_SIZE = 32, S_DIR_ENTRY = 33,
-       S_MEM_GROW = 40, S_THREAD = 41, S_THREAD_EXIT = 42, S_CLIP_SET = 50, S_CLIP_GET = 51, S_NOTIFY = 60 };
+       S_MEM_GROW = 40, S_THREAD = 41, S_THREAD_EXIT = 42, S_CLIP_SET = 50, S_CLIP_GET = 51, S_NOTIFY = 60,
+       S_TICKS_US = 7, S_TIME = 8, S_PROC_INFO = 9, S_WIN_POST = 15, S_TEXT = 21,
+       S_FILE_STAT = 34, S_FILE_DELETE = 35, S_MKDIR = 36, S_FILE_RENAME = 37,
+       S_THREAD_AT = 43, S_SET_GS = 44, S_MEM_MAP = 45, S_MEM_UNMAP = 46, S_MEM_PROTECT = 47,
+       S_FAULT_HANDLER = 48, S_FAULT_RETURN = 49, S_CON_WRITE = 70, S_CON_READ = 71 };
 enum { G_FILL = 1, G_RRECT = 2, G_TEXT = 3, G_TEXT_W = 4, G_ICON = 5, G_LINE = 6, G_DISC = 7, G_CLEAR = 8, G_RECT = 9 };
 
 // ---- process
@@ -98,6 +102,32 @@ static inline void* mem_grow(unsigned long long bytes) { return (void*)sys(S_MEM
 void* malloc(unsigned long long n);
 void  free(void* p);
 int   thread(void (*fn)(void*), void* arg);      // another thread in this process, preemptively scheduled; returns its id or -1
+
+
+// ---- the lower-level calls (the Win32 runtime in sdk/win32 is built on these)
+enum { PROT_NONE = 0, PROT_R = 1, PROT_W = 2, PROT_X = 4 };
+struct Clock { int year, month, day, hour, minute, second, weekday; };
+struct Stat { u32 size, mtime, ctime, flags; };          // flags: 1 folder, 2 read-only
+struct Fault { u64 int_no, err, cr2, rip, rsp, rflags, rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15; };
+static inline u64 ticks_us() { return (u64)sys(S_TICKS_US); }
+static inline u32 clock(Clock* c) { return (u32)sys(S_TIME, (word)c); }                      // local time; returns a file-time stamp
+static inline int proc_info(int what, char* buf, int cap) { return (int)sys(S_PROC_INFO, what, (word)buf, cap); }   // 0 command line, 1 start folder
+static inline bool event_wait(Event* e, unsigned ms) { return sys(S_WIN_EVENT, (word)e, 1, ms) == 1; }  // wait at most ms (0 = for ever)
+static inline void event_post(int a = 0, int b = 0, int c = 0, int d = 0) { sys(S_WIN_POST, a, b, c, d); }   // an EV_USER for this program
+static inline int file_stat(const char* path, Stat* st) { return (int)sys(S_FILE_STAT, (word)path, (word)st); }
+static inline int file_delete(const char* path) { return (int)sys(S_FILE_DELETE, (word)path); }
+static inline int make_dir(const char* path) { return (int)sys(S_MKDIR, (word)path); }
+static inline int file_rename(const char* from, const char* to) { return (int)sys(S_FILE_RENAME, (word)from, (word)to); }
+// memory above 4 GiB at an address of the program's choice (0: the system picks), with page protection
+static inline void* mem_map(void* addr, u64 bytes, int prot) { return (void*)sys(S_MEM_MAP, (word)addr, (word)bytes, prot); }
+static inline int mem_unmap(void* addr, u64 bytes) { return (int)sys(S_MEM_UNMAP, (word)addr, (word)bytes); }
+static inline int mem_protect(void* addr, u64 bytes, int prot) { return (int)sys(S_MEM_PROTECT, (word)addr, (word)bytes, prot); }
+static inline int thread_at(void* entry, void* arg, void* stack_top) { return (int)sys(S_THREAD_AT, (word)entry, (word)arg, (word)stack_top); }
+static inline int set_gs(void* base) { return (int)sys(S_SET_GS, (word)base); }             // this thread's gs base
+static inline int fault_handler(void (*fn)(Fault*)) { return (int)sys(S_FAULT_HANDLER, (word)fn); }
+static inline void fault_return(Fault* f) { sys(S_FAULT_RETURN, (word)f); }
+static inline int con_write(const void* buf, int len) { return (int)sys(S_CON_WRITE, (word)buf, len); }   // how much was taken
+static inline int con_read(void* buf, int cap) { return (int)sys(S_CON_READ, (word)buf, cap); }           // 0 nothing yet, -1 end
 
 }  // namespace si
 

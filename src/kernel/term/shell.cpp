@@ -917,11 +917,21 @@ retokenize:
     return status;
 }
 
+void cmd_win32run(Shell& sh, int argc, char** argv);
 void Shell::exec(int argc, char** argv) {
     const Command* c = find_command(argv[0]);
     if (!c) {
         FsNode* n = fs_lookup(argv[0], cwd);
         if (n && n->dir && argc == 1 && flavor != FL_BASH) { cwd = n; return; }     // zsh/fish auto-cd
+        if (n && !n->dir && n->size > 2 && n->data[0] == 'M' && n->data[1] == 'Z') {   // a Windows program
+            char* av[66];
+            av[0] = (char*)"win32run";
+            int k = 0;
+            for (; k < argc && k < 64; k++) av[k + 1] = argv[k];
+            av[k + 1] = nullptr;
+            cmd_win32run(*this, k + 1, av);
+            return;
+        }
         if (n && !n->dir && (strchr(argv[0], '/') || str_icontains(argv[0], ".sh"))) { source_file(n); return; }
         status = 127;
         if (flavor == FL_FISH) err("fish: Unknown command: %s\n", argv[0]);

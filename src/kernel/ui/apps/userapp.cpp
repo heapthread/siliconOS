@@ -84,6 +84,17 @@ int  userapp_screen_pixels() { extern int SW, SH; return SW * SH; }
 // ---- opening a .uapp
 App* new_uapp_note(const char* msg) { (void)msg; return nullptr; }
 
+// a Windows program opened from the desktop: no console, what it prints goes to the serial log
+void win32_run(const char* path) {
+    char err[96], cmd[220], cwd[200];
+    snprintf(cmd, sizeof(cmd), "\"%s\"", path);
+    strlcpy(cwd, path, sizeof(cwd));
+    char* sl = strrchr(cwd, '/');
+    if (sl && sl != cwd) *sl = 0;
+    Proc* p = win32_spawn(cmd, cwd, false, err, sizeof(err));
+    if (!p) ui_notify("Can't run program", err, "module");
+}
+
 void uapp_run(const char* path) {
     char err[96];
     Proc* p = proc_spawn(path, err, sizeof(err));

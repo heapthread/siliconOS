@@ -115,9 +115,12 @@ gdt_load:
     mov ax, r8w
     mov ds, ax
     mov es, ax
+    mov ss, ax
+    ; fs and gs hold the user data selector: returning to ring 3 would clear a kernel one, and with it the
+    ; gs base a thread keeps its thread block at (proc.cpp sets that base on every switch)
+    mov ax, 0x1B
     mov fs, ax
     mov gs, ax
-    mov ss, ax
     movzx rdx, dx
     lea rax, [.reload]
     push rdx
