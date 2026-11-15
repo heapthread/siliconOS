@@ -4,6 +4,7 @@
 #include "../ui/wm.h"
 #include "../text.h"
 #include "../drv/drivers.h"
+#include "../gfx/vfont.h"
 
 void panic_frame(const char* what, IntFrame* f);
 
@@ -20,7 +21,8 @@ static const u64 USER_END    = 0x80000000ull;
 // the address they were linked for (usually 5 GiB) and their heaps and stacks here.
 static const u64 USER_HI     = 0x100000000ull;
 static const u64 USER_HI_END = 0x8000000000ull;
-static const u64 MMAP_BASE   = 0x200000000ull;    // mem_map without an address starts handing out from here
+static const u64 MMAP_BASE   = 0x7000000000ull;   // mem_map without an address (and window buffers) come from here:
+                                                  // the top 64 GiB, so they never meet what a program maps at addresses it chose
 static const u32 STACK_PAGES = 32;                // 128 KiB per thread
 static const u32 KSTACK_SIZE = 32 * 1024;
 static const int MAX_THREADS = 8;                 // threads on kernel-made stacks (the old thread call)
@@ -465,7 +467,7 @@ void proc_reap() {
             }
             continue;
         }
-        if (p->app) { userapp_detach(p->app); p->app = nullptr; }
+        for (int w = 0; w < MAX_UWIN; w++) if (p->win[w].app) { userapp_detach(p->win[w].app); p->win[w].app = nullptr; }
         if (p->con_hold) continue;                   // the shell hasn't shown everything it printed yet
         for (int k = 0; k < p->threads.len; k++) {
             Thread* t = p->threads[k];
@@ -508,6 +510,8 @@ IntFrame* proc_fault(IntFrame* f, const char* what) {
             // data says so, which lets the faulting thread's stack be walked through the handler
             u64* mf = (u64*)(sp - 40);
             mf[0] = f->rip; mf[1] = 0x23; mf[2] = f->rflags; mf[3] = f->rsp; mf[4] = 0x1B;
+            static u32 reported = 0;
+            if (reported++ < 32) klog("proc: %s (pid %d) %s at %lx (address %lx, gs %lx): passed to its fault handler\n", p->name, p->pid, what, f->rip, cr2, cur->gs_base);
             cur->in_fault = true;
             f->rcx = sp;
             f->rdi = sp;
@@ -538,6 +542,7 @@ enum {
     SYS_THREAD_AT = 43, SYS_SET_GS = 44, SYS_MEM_MAP = 45, SYS_MEM_UNMAP = 46, SYS_MEM_PROTECT = 47,
     SYS_FAULT_HANDLER = 48, SYS_FAULT_RETURN = 49,
     SYS_CON_WRITE = 70, SYS_CON_READ = 71,
+    SYS_WIN_CREATE = 16, SYS_WIN_CTL = 17, SYS_WIN_EVENT2 = 18,
 };
 enum { GFX_FILL = 1, GFX_RRECT = 2, GFX_TEXT = 3, GFX_TEXT_W = 4, GFX_ICON = 5, GFX_LINE = 6, GFX_DISC = 7, GFX_CLEAR = 8, GFX_RECT = 9 };
 
@@ -552,8 +557,9 @@ static bool path_ok(const char* path, bool write) {
 }
 
 static bool surf_canvas(Proc* p, Canvas& c) {
-    if (!p->surf || p->sw <= 0 || p->sh <= 0) return false;
-    c.init(p->surf, p->sw, p->sh, p->sw);
+    UWin& w = p->win[0];
+    if (!w.surf || w.sw <= 0 || w.sh <= 0) return false;
+    c.init(w.surf, w.sw, w.sh, w.sw);
     return true;
 }
 
@@ -589,12 +595,12 @@ static i64 sys_gfx(Proc* p, u64 op, u64 argp, u64 strp) {
     }
     default: return -1;
     }
-    p->dirty = true;
+    p->win[0].dirty = true;
     return 0;
 }
 
 static i64 sys_win_open(Proc* p, int w, int h, u64 title_va, int flags) {
-    if (p->app || w < 80 || h < 60 || w > 4096 || h > 4096) return 0;
+    if (p->win[0].used || w < 80 || h < 60 || w > 4096 || h > 4096) return 0;
     char title[48];
     if (!user_str(p, title_va, title, sizeof(title))) strlcpy(title, p->name, sizeof(title));
     u32 maxpx = max<u32>((u32)userapp_screen_pixels(), (u32)(w * h));
@@ -602,11 +608,18 @@ static i64 sys_win_open(Proc* p, int w, int h, u64 title_va, int flags) {
     u32 pages = (maxpx * 4 + 4095) / 4096;
     u64 pa = 0;
     if (!add_region(p, USER_SURF, pages, &pa)) return 0;
-    p->surf = (u32*)pa;
-    p->surf_pages = pages;
-    p->sw = w; p->sh = h;
-    memset(p->surf, 0xFF, (u64)w * h * 4);
-    p->app = userapp_create(p, w, h, title, flags);
+    UWin& u = p->win[0];
+    memset(&u, 0, sizeof(u));
+    u.used = true;
+    u.surf = (u32*)pa;
+    u.va = USER_SURF;
+    u.pages = pages;
+    u.sw = w; u.sh = h;
+    u.resizable = (flags & 1) != 0;
+    u.x = u.y = -1;
+    strlcpy(u.title, title, sizeof(u.title));
+    memset(u.surf, 0xFF, (u64)w * h * 4);
+    u.app = userapp_create(p, 0);
     return (i64)USER_SURF;
 }
 
@@ -643,12 +656,23 @@ static IntFrame* sys_exit_now(IntFrame* f, Proc* p, int code) {
 // ---------------------------------------------------------------- the newer calls: memory, threads, console, files
 struct UStat { u32 size, mtime, ctime, flags; };          // flags: 1 folder, 2 read-only
 
+// the next free stretch of pages at or after p->mmap_next
+static u64 auto_place(Proc* p, u64 pages) {
+    u64 va = p->mmap_next;
+    while (va + pages * 4096 <= USER_HI_END) {
+        if (!range_used(p, va, pages)) return va;
+        va += 0x100000;
+    }
+    return 0;
+}
+
 static i64 sys_mem_map(Proc* p, u64 addr, u64 len, int prot) {
     u64 pages = (len + 4095) / 4096;
     if (!pages || pages > arena_pages) return 0;
     if (!addr) {
-        addr = p->mmap_next;
-        if (addr + pages * 4096 > USER_HI_END) return 0;
+        addr = auto_place(p, pages);
+        if (!addr) return 0;
+        p->mmap_next = addr;
     } else if ((addr & 4095) || addr < USER_HI || addr + pages * 4096 > USER_HI_END || range_used(p, addr, pages)) return 0;
     if (!add_region(p, addr, (u32)pages, nullptr, prot_bits(prot))) return 0;
     if (addr == p->mmap_next) p->mmap_next += (pages + 16) * 4096;      // a gap after each block catches overruns
@@ -678,6 +702,8 @@ static bool user_path(Proc* p, u64 va, char* path, int cap, bool write) {
 }
 
 static i64 sys_text(Proc* p, u64 argp, u64 strp, u64 len);
+static i64 sys_win_create(Proc* p, int w, int h, u64 title_va, int flags, u64 out_va);
+static i64 sys_win_ctl(Proc* p, u64 wid, u64 op, u64 a, u64 b, u64 c);
 
 static IntFrame* sys_more(IntFrame* f, Proc* p, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5) {
     i64 ret = 0;
@@ -706,6 +732,28 @@ static IntFrame* sys_more(IntFrame* f, Proc* p, u64 a1, u64 a2, u64 a3, u64 a4, 
         break;
     }
     case SYS_TEXT: ret = sys_text(p, a1, a2, a3); break;
+    case SYS_WIN_CREATE: ret = sys_win_create(p, (int)a1, (int)a2, a3, (int)a4, a5); break;
+    case SYS_WIN_CTL: ret = sys_win_ctl(p, a1, a2, a3, a4, a5); break;
+    case SYS_WIN_EVENT2: {                            // like SYS_WIN_EVENT, with the window each event is for
+        if (!user_ok(p, a1, sizeof(UEvent), true)) { ret = -1; break; }
+        if (p->ev_head != p->ev_tail) {
+            memcpy((void*)a1, &p->evq[p->ev_head], sizeof(UEvent));
+            p->ev_head = (p->ev_head + 1) % EVQ;
+            cur->wait_until = 0;
+            ret = 1;
+        } else if (a2) {
+            if (a3) {
+                u64 now = ticks();
+                if (!cur->wait_until) cur->wait_until = now + a3;
+                if (now >= cur->wait_until) { cur->wait_until = 0; ret = 0; break; }
+            }
+            cur->state = T_WAIT;
+            f->rip -= 2;
+            f->rax = SYS_WIN_EVENT2;
+            return sched_block(f);
+        }
+        break;
+    }
     case SYS_FILE_STAT: {
         char path[200];
         if (!user_path(p, a1, path, sizeof(path), false) || !user_ok(p, a2, sizeof(UStat), true)) { ret = -1; break; }
@@ -808,7 +856,127 @@ static IntFrame* sys_more(IntFrame* f, Proc* p, u64 a1, u64 a2, u64 a3, u64 a4, 
     return f;
 }
 
-static i64 sys_text(Proc* p, u64 argp, u64 strp, u64 len) { (void)p; (void)argp; (void)strp; (void)len; return -1; }
+// text with the system's TrueType fonts into a scratch buffer of the program's (white on black, so the
+// pixel values are coverage); the Win32 runtime composites it with its own colours and clipping
+struct UTextArgs { u64 pixels; i32 w, h; i32 x, baseline; i32 px100; i32 flags; i32 out_w, out_asc, out_desc, out_lh; };
+static i64 sys_text(Proc* p, u64 argp, u64 strp, u64 len) {
+    UTextArgs t;
+    if (!user_ok(p, argp, sizeof(t), true)) return -1;
+    memcpy(&t, (void*)argp, sizeof(t));
+    if (len > 4096 || !user_ok(p, strp, len)) return -1;
+    float px = t.px100 / 100.0f;
+    if (px < 1 || px > 400) return -1;
+    VFont* f = vfont_get((t.flags & 1) != 0, (t.flags & 2) != 0);
+    if (!f) return -1;
+    const char* s = (const char*)strp;
+    float pen = (float)t.x;
+    bool draw = !(t.flags & 4) && t.pixels;
+    Canvas c;
+    if (draw) {
+        if (t.w <= 0 || t.h <= 0 || t.w > 8192 || t.h > 8192 || !user_ok(p, t.pixels, (u64)t.w * t.h * 4, true)) return -1;
+        c.init((u32*)t.pixels, t.w, t.h, t.w);
+    }
+    for (u64 i = 0; i < len;) {
+        u32 cp = (u8)s[i];
+        int more = cp >= 0xF0 ? 3 : cp >= 0xE0 ? 2 : cp >= 0xC0 ? 1 : 0;
+        if (more) { cp &= 0x3F >> more; for (int k = 1; k <= more && i + k < len; k++) cp = (cp << 6) | ((u8)s[i + k] & 0x3F); }
+        i += more + 1;
+        int gid = vfont_gid(f, cp);
+        if (!gid && cp >= 0x20) gid = vfont_gid(f, '?');
+        if (draw) vfont_draw_gid(c, f, gid, px, pen, (float)t.baseline, 0xFFFFFFFF);
+        pen += vfont_advance(f, gid, px);
+    }
+    t.out_w = (int)(pen - t.x + 0.5f);
+    t.out_asc = (int)(vfont_ascent(px) + 0.5f);
+    t.out_lh = (int)(vfont_line_height(px) + 0.5f);
+    t.out_desc = t.out_lh - t.out_asc;
+    memcpy((void*)argp, &t, sizeof(t));
+    return t.out_w;
+}
+
+// ---- more windows per process (the Win32 runtime makes one per top-level HWND)
+static i64 sys_win_create(Proc* p, int w, int h, u64 title_va, int flags, u64 out_va) {
+    if (w < 1 || h < 1 || w > 4096 || h > 4096 || !user_ok(p, out_va, 16, true)) return -1;
+    int id = -1;
+    for (int i = 1; i < MAX_UWIN; i++) if (!p->win[i].used) { id = i; break; }
+    if (id < 0) return -1;
+    UWin& u = p->win[id];
+    memset(&u, 0, sizeof(u));
+    if (!user_str(p, title_va, u.title, sizeof(u.title))) strlcpy(u.title, p->name, sizeof(u.title));
+    // room for the window to grow to the whole screen without remapping
+    u32 maxpx = max<u32>((u32)userapp_screen_pixels(), (u32)(w * h));
+    maxpx = min<u32>(maxpx, 3840u * 2160u);
+    u32 pages = (maxpx * 4 + 4095) / 4096;
+    u64 va = auto_place(p, pages), pa = 0;
+    if (!va || !add_region(p, va, pages, &pa)) return -1;
+    p->mmap_next = va + ((u64)pages + 16) * 4096;
+    u.used = true;
+    u.surf = (u32*)pa;
+    u.va = va;
+    u.pages = pages;
+    u.sw = w; u.sh = h;
+    u.resizable = (flags & 1) != 0;
+    u.x = u.y = -1;
+    memset(u.surf, 0xFF, (u64)w * h * 4);
+    ((u64*)out_va)[0] = va;
+    ((u64*)out_va)[1] = (u64)pages * 1024;                    // capacity in pixels
+    return id;
+}
+
+enum { WC_DESTROY, WC_SHOW, WC_HIDE, WC_TITLE, WC_PRESENT, WC_GET_SIZE, WC_SET_SIZE, WC_MOVE, WC_GET_POS, WC_FOCUS,
+       WC_MINIMIZE, WC_MAXIMIZE, WC_IS_FOCUSED, WC_CURSOR_POS, WC_SCREEN_SIZE, WC_SET_CURSOR, WC_IS_VISIBLE };
+static i64 sys_win_ctl(Proc* p, u64 wid, u64 op, u64 a, u64 b, u64 c) {
+    (void)c;
+    if (op == WC_CURSOR_POS) { extern int ui_mouse_x, ui_mouse_y; return (i64)(u32)ui_mouse_x | ((i64)(u32)ui_mouse_y << 32); }
+    if (op == WC_SCREEN_SIZE) { extern int SW, SH; return (i64)(SW | (SH << 16)); }
+    if (wid >= (u64)MAX_UWIN || !p->win[wid].used) return -1;
+    UWin& u = p->win[wid];
+    switch (op) {
+    case WC_DESTROY:
+        if (u.app) { userapp_detach(u.app); userapp_close(u.app); u.app = nullptr; }
+        if (wid) { u64 pages = u.pages; u64 va = u.va; unmap_range(p, va, pages); }
+        u.used = false;
+        return 0;
+    case WC_SHOW:
+        if (!u.app) u.app = userapp_create(p, (int)wid);
+        return 0;
+    case WC_HIDE:
+        if (u.app) { userapp_detach(u.app); userapp_close(u.app); u.app = nullptr; }
+        return 0;
+    case WC_TITLE: {
+        char t[64];
+        if (!user_str(p, a, t, sizeof(t))) return -1;
+        strlcpy(u.title, t, sizeof(u.title));
+        if (u.app) userapp_set_title(u.app, t);
+        return 0;
+    }
+    case WC_PRESENT: u.dirty = true; return 0;
+    case WC_GET_SIZE: return (i64)(u.sw | (u.sh << 16));
+    case WC_SET_SIZE: {
+        int w = (int)a, h = (int)b;
+        if (w < 1 || h < 1 || (u64)w * h > (u64)u.pages * 1024) return -1;
+        u.sw = w; u.sh = h;
+        if (u.app) userapp_set_geometry(u.app, -1, -1, w, h);
+        return 0;
+    }
+    case WC_MOVE:
+        u.x = (int)a; u.y = (int)b;
+        if (u.app) userapp_set_geometry(u.app, (int)a, (int)b, -1, -1);
+        return 0;
+    case WC_GET_POS: {
+        int x = u.x, y = u.y, w, h;
+        if (u.app) userapp_geometry(u.app, &x, &y, &w, &h);
+        return (i64)(u32)x | ((i64)(u32)y << 32);
+    }
+    case WC_FOCUS: if (u.app) userapp_focus(u.app); return 0;
+    case WC_MINIMIZE: if (u.app) userapp_minimize(u.app, 0); return 0;
+    case WC_MAXIMIZE: if (u.app) userapp_minimize(u.app, 1); return 0;
+    case WC_IS_FOCUSED: return u.app && userapp_focused(u.app) ? 1 : 0;
+    case WC_SET_CURSOR: u.cursor = (int)a; return 0;
+    case WC_IS_VISIBLE: return u.app ? 1 : 0;
+    }
+    return -1;
+}
 
 IntFrame* sys_dispatch(IntFrame* f) {
     Proc* p = cur->proc;
@@ -828,13 +996,13 @@ IntFrame* sys_dispatch(IntFrame* f) {
     case SYS_GETPID: ret = p->pid; break;
     case SYS_LOG: { char b[160]; if (user_str(p, a1, b, sizeof(b))) klog("%s: %s\n", p->name, b); break; }
     case SYS_WIN_OPEN: ret = sys_win_open(p, (int)a1, (int)a2, a3, (int)a4); break;
-    case SYS_WIN_PRESENT: p->dirty = true; break;
-    case SYS_WIN_TITLE: { char b[48]; if (p->app && user_str(p, a1, b, sizeof(b))) userapp_set_title(p->app, b); break; }
-    case SYS_WIN_SIZE: ret = p->surf ? (i64)(p->sw | (p->sh << 16)) : 0; break;
+    case SYS_WIN_PRESENT: p->win[0].dirty = true; break;
+    case SYS_WIN_TITLE: { char b[48]; if (p->win[0].app && user_str(p, a1, b, sizeof(b))) userapp_set_title(p->win[0].app, b); break; }
+    case SYS_WIN_SIZE: ret = p->win[0].surf ? (i64)(p->win[0].sw | (p->win[0].sh << 16)) : 0; break;
     case SYS_WIN_EVENT: {
         if (!user_ok(p, a1, sizeof(UEvent), true)) { ret = -1; break; }
         if (p->ev_head != p->ev_tail) {
-            memcpy((void*)a1, &p->evq[p->ev_head], sizeof(UEvent));
+            memcpy((void*)a1, &p->evq[p->ev_head], 20);
             p->ev_head = (p->ev_head + 1) % EVQ;
             cur->wait_until = 0;
             ret = 1;
@@ -917,7 +1085,7 @@ void proc_push_event(Proc* p, const UEvent& e) {
     if (e.type == EV_MOUSE && (e.d & 0xFF) == 0 && p->ev_head != p->ev_tail) {
         UEvent& last = p->evq[(p->ev_tail + EVQ - 1) % EVQ];
         int used = (p->ev_tail + EVQ - p->ev_head) % EVQ;
-        if (last.type == EV_MOUSE && (last.d & 0xFF) == 0 && used > 8) { last = e; return; }
+        if (last.type == EV_MOUSE && (last.d & 0xFF) == 0 && last.win == e.win && used > 8) { last = e; return; }
     }
     p->evq[p->ev_tail] = e;
     p->ev_tail = nt;

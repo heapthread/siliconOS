@@ -668,7 +668,41 @@ static void* CDECL c__Gettnames() { return h_alloc(256, true); }
 static int CDECL c___iswcsymf(WCHAR c) { return c_iswalpha(c) || c == '_'; }
 static int CDECL c___iswcsym(WCHAR c) { return c_iswalnum(c) || c == '_'; }
 
+// the multibyte-character functions: the code page is UTF-8, which has no lead bytes in the DBCS sense
+static int CDECL c__ismbblead(u32 c) { (void)c; return 0; }
+static int CDECL c__ismbbtrail(u32 c) { (void)c; return 0; }
+static int CDECL c__ismbblead_l(u32 c, void* l) { (void)c; (void)l; return 0; }
+static int CDECL c__ismbcspace(u32 c) { return c == ' ' || (c >= 9 && c <= 13); }
+static int CDECL c__ismbcdigit(u32 c) { return c >= '0' && c <= '9'; }
+static int CDECL c__ismbcalpha(u32 c) { return (c | 32) >= 'a' && (c | 32) <= 'z'; }
+static usize CDECL c__mbclen(const u8* s) { u8 c = *s; return c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1; }
+static u8* CDECL c__mbsinc(const u8* s) { return (u8*)s + c__mbclen(s); }
+static u8* CDECL c__mbsdec(const u8* start, const u8* s) { if (s <= start) return nullptr; s--; while (s > start && (*s & 0xC0) == 0x80) s--; return (u8*)s; }
+static usize CDECL c__mbslen(const u8* s) { usize n = 0; while (*s) { s += c__mbclen(s); n++; } return n; }
+static u8* CDECL c__mbschr(const u8* s, u32 c) { return (u8*)schr((const char*)s, (int)c); }
+static u8* CDECL c__mbsrchr(const u8* s, u32 c) { return (u8*)srchr((const char*)s, (int)c); }
+static u8* CDECL c__mbsstr(const u8* a, const u8* b) { return (u8*)sfind((const char*)a, (const char*)b); }
+static int CDECL c__mbscmp(const u8* a, const u8* b) { return scmp((const char*)a, (const char*)b); }
+static int CDECL c__mbsicmp(const u8* a, const u8* b) { return sicmp((const char*)a, (const char*)b); }
+static int CDECL c__mbsnbcmp(const u8* a, const u8* b, usize n) { return sncmp((const char*)a, (const char*)b, n); }
+static int CDECL c__mbsnbicmp(const u8* a, const u8* b, usize n) { return snicmp((const char*)a, (const char*)b, n); }
+static u8* CDECL c__mbscpy(u8* d, const u8* s) { return (u8*)scpy((char*)d, (const char*)s); }
+static u8* CDECL c__mbsnbcpy(u8* d, const u8* s, usize n) { return (u8*)c_strncpy((char*)d, (const char*)s, n); }
+static u8* CDECL c__mbscat(u8* d, const u8* s) { return (u8*)c_strcat((char*)d, (const char*)s); }
+static u8* CDECL c__mbsupr(u8* s) { return (u8*)c__strupr((char*)s); }
+static u8* CDECL c__mbslwr(u8* s) { return (u8*)c__strlwr((char*)s); }
+static u8* CDECL c__mbstok(u8* s, const u8* d) { return (u8*)c_strtok((char*)s, (const char*)d); }
+static usize CDECL c__mbsspn(const u8* s, const u8* set) { return c_strspn((const char*)s, (const char*)set); }
+static usize CDECL c__mbscspn(const u8* s, const u8* set) { return c_strcspn((const char*)s, (const char*)set); }
+static u8* CDECL c__mbspbrk(const u8* s, const u8* set) { return (u8*)c_strpbrk((const char*)s, (const char*)set); }
+static u32 CDECL c__mbctoupper(u32 c) { return (u32)c_toupper((int)c); }
+static u32 CDECL c__mbctolower(u32 c) { return (u32)c_tolower((int)c); }
+static u8 mbctype_table[257];
+static u8* CDECL c___p__mbctype() { return mbctype_table; }
 static const Export str_exports[] = {
+    X(_ismbblead), X(_ismbbtrail), X(_ismbblead_l), X(_ismbcspace), X(_ismbcdigit), X(_ismbcalpha), X(_mbclen), X(_mbsinc), X(_mbsdec),
+    X(_mbslen), X(_mbschr), X(_mbsrchr), X(_mbsstr), X(_mbscmp), X(_mbsicmp), X(_mbsnbcmp), X(_mbsnbicmp), X(_mbscpy), X(_mbsnbcpy),
+    X(_mbscat), X(_mbsupr), X(_mbslwr), X(_mbstok), X(_mbsspn), X(_mbscspn), X(_mbspbrk), X(_mbctoupper), X(_mbctolower), X(__p__mbctype),
     X(memcpy), X(memmove), X(memset), X(memcmp), X(memchr), X(_memicmp), X(_memccpy), X(memcpy_s), X(memmove_s),
     X(strlen), X(strnlen), X(strcpy), X(strncpy), X(strcat), X(strncat), X(strcmp), X(strncmp), X(_stricmp), X(_strnicmp),
     X(_stricmp_l), X(_strnicmp_l), EA("_strcmpi", c__stricmp), EA("stricmp", c__stricmp), EA("strcmpi", c__stricmp), EA("strnicmp", c__strnicmp),
@@ -707,7 +741,7 @@ EXPORT_TABLE("ucrtbase.dll", str_exports);
 static const u16* pctype_var = nullptr;
 static struct PctypeInit { PctypeInit() { ctype_init(); pctype_var = ctype_table + 1; } } pctype_init;
 static const Export msvcrt_str[] = {
-    {"__mb_cur_max", (void*)&c___mb_cur_max}, {"_pctype", (void*)&pctype_var},
+    {"__mb_cur_max", (void*)&c___mb_cur_max}, {"_pctype", (void*)&pctype_var}, {"_mbctype", (void*)mbctype_table},
 };
 EXPORT_TABLE("msvcrt.dll", msvcrt_str);
 

@@ -10,7 +10,7 @@
 namespace rt {
 
 static const u64 VM_LO = 0x100000000ull;           // what silicon lets a program map
-static const u64 VM_HI = 0x8000000000ull;
+static const u64 VM_HI = 0x7000000000ull;          // silicon keeps the top 64 GiB for what it places itself (window buffers)
 static const u64 VM_DYNAMIC = 0x200000000ull;      // where allocations without an address start
 static const u64 GRAN = 0x10000;                   // allocations start on 64 KiB boundaries
 static const u64 PAGE = 4096;

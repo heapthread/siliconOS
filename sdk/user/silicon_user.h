@@ -26,7 +26,7 @@ typedef unsigned int   u32;
 typedef unsigned long long u64;
 typedef long long word;                  // a machine word (long is 32 bits with this toolchain)
 
-enum EventType { EV_NONE, EV_KEY, EV_MOUSE, EV_CLOSE, EV_RESIZE, EV_USER };
+enum EventType { EV_NONE, EV_KEY, EV_MOUSE, EV_CLOSE, EV_RESIZE, EV_USER, EV_FOCUS, EV_MOVE };
 enum MouseKind { MOUSE_MOVE, MOUSE_DOWN, MOUSE_UP, MOUSE_DOUBLE, MOUSE_WHEEL, MOUSE_LEAVE };
 enum Key { KEY_BACKSPACE = 8, KEY_TAB = 9, KEY_ENTER = 10, KEY_ESC = 27,
            KEY_UP = 0x100, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END, KEY_PGUP, KEY_PGDN, KEY_INSERT, KEY_DELETE };
@@ -52,7 +52,8 @@ enum { S_EXIT = 0, S_YIELD = 1, S_SLEEP = 2, S_TICKS = 3, S_LOG = 4, S_GETPID = 
        S_TICKS_US = 7, S_TIME = 8, S_PROC_INFO = 9, S_WIN_POST = 15, S_TEXT = 21,
        S_FILE_STAT = 34, S_FILE_DELETE = 35, S_MKDIR = 36, S_FILE_RENAME = 37,
        S_THREAD_AT = 43, S_SET_GS = 44, S_MEM_MAP = 45, S_MEM_UNMAP = 46, S_MEM_PROTECT = 47,
-       S_FAULT_HANDLER = 48, S_FAULT_RETURN = 49, S_CON_WRITE = 70, S_CON_READ = 71 };
+       S_FAULT_HANDLER = 48, S_FAULT_RETURN = 49, S_CON_WRITE = 70, S_CON_READ = 71,
+       S_WIN_CREATE = 16, S_WIN_CTL = 17, S_WIN_EVENT2 = 18 };
 enum { G_FILL = 1, G_RRECT = 2, G_TEXT = 3, G_TEXT_W = 4, G_ICON = 5, G_LINE = 6, G_DISC = 7, G_CLEAR = 8, G_RECT = 9 };
 
 // ---- process
@@ -128,6 +129,20 @@ static inline int fault_handler(void (*fn)(Fault*)) { return (int)sys(S_FAULT_HA
 static inline void fault_return(Fault* f) { sys(S_FAULT_RETURN, (word)f); }
 static inline int con_write(const void* buf, int len) { return (int)sys(S_CON_WRITE, (word)buf, len); }   // how much was taken
 static inline int con_read(void* buf, int cap) { return (int)sys(S_CON_READ, (word)buf, cap); }           // 0 nothing yet, -1 end
+
+
+// ---- several windows per program. win_create returns the window's id (1..15) and where its pixels are;
+// events from event2 say which window they are for. focus: a = 1 gained, 0 lost; move: a, b = client origin
+struct Event2 { u32 type; int a, b, c, d; int win; };
+enum WinCtl { WC_DESTROY, WC_SHOW, WC_HIDE, WC_TITLE, WC_PRESENT, WC_GET_SIZE, WC_SET_SIZE, WC_MOVE, WC_GET_POS, WC_FOCUS,
+              WC_MINIMIZE, WC_MAXIMIZE, WC_IS_FOCUSED, WC_CURSOR_POS, WC_SCREEN_SIZE, WC_SET_CURSOR, WC_IS_VISIBLE };
+static inline int win_create(int w, int h, const char* title, int flags, u64 out[2]) { return (int)sys(S_WIN_CREATE, w, h, (word)title, flags, (word)out); }
+static inline word win_ctl(int win, int op, word a = 0, word b = 0, word c = 0) { return sys(S_WIN_CTL, win, op, a, b, c); }
+static inline bool event2(Event2* e, bool block, unsigned ms = 0) { return sys(S_WIN_EVENT2, (word)e, block ? 1 : 0, ms) == 1; }
+// text with the system fonts, white on black into a 32-bit buffer (the pixel values are coverage)
+struct TextArgs { u64 pixels; int w, h; int x, baseline; int px100; int flags; int out_w, out_asc, out_desc, out_lh; };
+enum { TX_BOLD = 1, TX_MONO = 2, TX_MEASURE = 4 };
+static inline int text_raster(TextArgs* a, const char* s, int len) { return (int)sys(S_TEXT, (word)a, (word)s, len); }
 
 }  // namespace si
 

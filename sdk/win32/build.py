@@ -88,8 +88,10 @@ def main():
         exe = os.path.join(tmp, "rt.exe")
         binf = os.path.join(tmp, "rt.bin")
         if not run([tool("ld"), "-m", "i386pep", "-T", ld_path, "--image-base", "0", "--section-alignment", "0x1000",
-                    "--file-alignment", "0x1000", "-nostdlib", "--no-insert-timestamp", "-e", "_start", "-o", exe] + objs):
+                    "--file-alignment", "0x1000", "-nostdlib", "--no-insert-timestamp", "-e", "_start",
+                    "-Map", os.path.splitext(os.path.abspath(args.output))[0] + ".map", "-o", exe] + objs):
             sys.exit("win32run build: link failed")
+        shutil.copy(exe, os.path.splitext(os.path.abspath(args.output))[0] + ".pe")    # symbols, for looking up crash addresses
         if not run([tool("objcopy"), "-O", "binary", exe, binf]):
             sys.exit(1)
         nm = subprocess.run([tool("nm"), exe], capture_output=True, text=True).stdout

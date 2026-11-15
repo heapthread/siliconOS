@@ -28,10 +28,26 @@ struct Thread {
 };
 
 // events a process reads with win_event (keep in sync with sdk/user/silicon_user.h)
-enum { EV_NONE, EV_KEY, EV_MOUSE, EV_CLOSE, EV_RESIZE, EV_USER };
-struct UEvent { u32 type; i32 a, b, c, d; };
+enum { EV_NONE, EV_KEY, EV_MOUSE, EV_CLOSE, EV_RESIZE, EV_USER, EV_FOCUS, EV_MOVE };
+struct UEvent { u32 type; i32 a, b, c, d; i32 win; };   // the first 20 bytes are what SYS_WIN_EVENT hands out
+static const int MAX_UWIN = 16;
 
 class UserApp;
+// a window of a process: a pixel buffer it shares with the kernel, shown by a UserApp while visible
+struct UWin {
+    bool     used;
+    UserApp* app;                  // nullptr while hidden
+    u32*     surf;                 // kernel view of the pixels
+    u64      va;                   // where the process sees them
+    int      sw, sh;               // current client size
+    u32      pages;                // capacity
+    bool     dirty;
+    bool     resizable;
+    int      x, y;                 // wanted client position on screen (-1: let the desktop choose)
+    int      cursor;               // a CursorShape for the client area
+    char     title[64];
+};
+
 struct Proc {
     int      pid;
     char     name[48];
@@ -48,11 +64,7 @@ struct Proc {
     u32      heap_len;
     Vec<Thread*> threads;
     int      stack_slots_used;
-    UserApp* app;
-    u32*     surf;                 // the window's pixels (shared with the kernel's window)
-    int      sw, sh;
-    u32      surf_pages;
-    bool     dirty;
+    UWin     win[MAX_UWIN];        // [0] is the window of SYS_WIN_OPEN
     UEvent   evq[64];
     int      ev_head, ev_tail;
     u64      start_ms;
@@ -97,7 +109,12 @@ void  proc_push_event(Proc* p, const UEvent& e);
 int   proc_cpu_permille();             // share of the last second spent in user code
 
 // ---- implemented in ui/apps/userapp.cpp
-UserApp* userapp_create(Proc* p, int w, int h, const char* title, int flags);
+UserApp* userapp_create(Proc* p, int wid);         // show window wid of p
+void     userapp_geometry(UserApp* a, int* x, int* y, int* w, int* h);   // client rect on screen
+void     userapp_set_geometry(UserApp* a, int x, int y, int w, int h);  // x < 0: keep the position
+void     userapp_focus(UserApp* a);
+bool     userapp_focused(UserApp* a);
+void     userapp_minimize(UserApp* a, int how);       // 0 minimize, 1 maximize/restore
 void     userapp_set_title(UserApp* a, const char* title);
 void     userapp_close(UserApp* a);
 void     userapp_detach(UserApp* a);    // the process is gone
