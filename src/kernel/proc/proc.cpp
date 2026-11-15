@@ -504,11 +504,15 @@ IntFrame* proc_fault(IntFrame* f, const char* what) {
             u->int_no = f->int_no; u->err = f->err; u->cr2 = cr2; u->rip = f->rip; u->rsp = f->rsp; u->rflags = f->rflags;
             u->rax = f->rax; u->rbx = f->rbx; u->rcx = f->rcx; u->rdx = f->rdx; u->rsi = f->rsi; u->rdi = f->rdi; u->rbp = f->rbp;
             u->r8 = f->r8; u->r9 = f->r9; u->r10 = f->r10; u->r11 = f->r11; u->r12 = f->r12; u->r13 = f->r13; u->r14 = f->r14; u->r15 = f->r15;
+            // a machine frame (rip, cs, rflags, rsp, ss) where a return address would go: the handler's unwind
+            // data says so, which lets the faulting thread's stack be walked through the handler
+            u64* mf = (u64*)(sp - 40);
+            mf[0] = f->rip; mf[1] = 0x23; mf[2] = f->rflags; mf[3] = f->rsp; mf[4] = 0x1B;
             cur->in_fault = true;
             f->rcx = sp;
             f->rdi = sp;
             f->rip = p->fault_handler;
-            f->rsp = sp - 40;                           // as if called: 32 bytes of shadow space above a return slot
+            f->rsp = sp - 40;
             f->rflags &= ~0x400ull;
             return f;
         }

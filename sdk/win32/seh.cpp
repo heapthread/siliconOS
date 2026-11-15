@@ -54,33 +54,45 @@ __asm__(".intel_syntax noprefix\n"
 
         // void RaiseException(code, flags, nargs, args)
         ".globl rt_RaiseException\n"
+        ".seh_proc rt_RaiseException\n"
         "rt_RaiseException:\n"
         "  sub rsp, 0x538\n"
+        "  .seh_stackalloc 0x538\n"
+        "  .seh_endprologue\n"
         CAPTURE_TO_RSP_40
         "  lea rax, [rsp+0x40]\n  mov [rsp+0x20], rax\n"
         "  call rt_raise_c\n"
         "  add rsp, 0x538\n"
         "  ret\n"
+        ".seh_endproc\n"
 
         // void RtlRaiseException(EXCEPTION_RECORD*)
         ".globl rt_RtlRaiseException\n"
+        ".seh_proc rt_RtlRaiseException\n"
         "rt_RtlRaiseException:\n"
         "  sub rsp, 0x538\n"
+        "  .seh_stackalloc 0x538\n"
+        "  .seh_endprologue\n"
         CAPTURE_TO_RSP_40
         "  lea rdx, [rsp+0x40]\n"
         "  call rt_raise_rec_c\n"
         "  add rsp, 0x538\n"
         "  ret\n"
+        ".seh_endproc\n"
 
         // void RtlUnwindEx(frame, target_ip, rec, retval, CONTEXT* scratch, history)
         ".globl rt_RtlUnwindEx\n"
+        ".seh_proc rt_RtlUnwindEx\n"
         "rt_RtlUnwindEx:\n"
         "  sub rsp, 0x538\n"
+        "  .seh_stackalloc 0x538\n"
+        "  .seh_endprologue\n"
         CAPTURE_TO_RSP_40
         "  lea rax, [rsp+0x40]\n  mov [rsp+0x20], rax\n"
         "  call rt_unwind_c\n"
         "  add rsp, 0x538\n"
         "  ret\n"
+        ".seh_endproc\n"
 
         // void rt_restore_context(CONTEXT*): carry on with exactly these registers
         ".globl rt_restore_context\n"
@@ -117,13 +129,20 @@ __asm__(".intel_syntax noprefix\n"
         "  jmp rt_restore_context\n"
 
         // silicon calls this (rcx = Fault*) when a thread faults: keep the FPU/SSE state, then go to C
+        // silicon leaves a machine frame (rip, cs, rflags, rsp, ss) where the return address would be, so the
+        // faulting thread's stack can be unwound through this function like any other
         ".globl rt_fault_entry\n"
+        ".seh_proc rt_fault_entry\n"
         "rt_fault_entry:\n"
+        "  .seh_pushframe\n"
         "  sub rsp, 0x228\n"
+        "  .seh_stackalloc 0x228\n"
+        "  .seh_endprologue\n"
         "  fxsave [rsp+0x20]\n"
         "  lea rdx, [rsp+0x20]\n"
         "  call rt_fault_c\n"
         "1: jmp 1b\n"
+        ".seh_endproc\n"
 
         // u64 rt_call_on_stack(fn, arg, stack_top): call fn(arg) on another stack
         ".globl rt_call_on_stack\n"
