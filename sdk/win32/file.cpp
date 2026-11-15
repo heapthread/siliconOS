@@ -1151,6 +1151,198 @@ static BOOL WINAPI GetNumberOfConsoleInputEvents(HANDLE h, u32* n) { (void)h; *n
 static BOOL WINAPI FlushConsoleInputBuffer(HANDLE h) { (void)h; return TRUE; }
 static BOOL WINAPI GetConsoleScreenBufferInfoEx(HANDLE h, void* i) { (void)h; (void)i; set_error(ERROR_NOT_SUPPORTED); return FALSE; }
 
+// ---------------------------------------------------------------- names, volumes, handle info
+static BOOL WINAPI GetVolumeInformationA(const char* root, char* name, u32 ncap, u32* serial, u32* maxlen, u32* flags, char* fs, u32 fscap) {
+    (void)root;
+    if (name && ncap) put_a("silicon", name, ncap);
+    if (serial) *serial = 0x51C0;
+    if (maxlen) *maxlen = 47;
+    if (flags) *flags = 3;
+    if (fs && fscap) put_a("SiliconFS", fs, fscap);
+    return TRUE;
+}
+static BOOL WINAPI GetVolumeInformationByHandleW(HANDLE h, WCHAR* name, u32 ncap, u32* serial, u32* maxlen, u32* flags, WCHAR* fs, u32 fscap) {
+    if (!h_get(h)) return FALSE;
+    return GetVolumeInformationW(nullptr, name, ncap, serial, maxlen, flags, fs, fscap);
+}
+static u32 WINAPI GetFinalPathNameByHandleA(HANDLE h, char* out, u32 cap, u32 flags) {
+    (void)flags;
+    FileObj* f = (FileObj*)h_get(h, OBJ_FILE);
+    if (!f) return 0;
+    char w[MAX_PATH + 8] = "\\\\?\\";
+    char p[MAX_PATH];
+    path_to_windows(f->fd ? f->fd->path : f->dirpath, p, sizeof(p));
+    slcat(w, p, sizeof(w));
+    return put_a(w, out, cap);
+}
+// the volume list has one volume, C:
+static HANDLE WINAPI FindFirstVolumeW(WCHAR* out, u32 cap) {
+    if (put_w("\\\\?\\Volume{51c051c0-0000-0000-0000-000000000000}\\", out, cap) >= cap) { set_error(ERROR_FILENAME_EXCED_RANGE); return INVALID_HANDLE_VALUE; }
+    return (HANDLE)(usize)0x51C0;
+}
+static BOOL WINAPI FindNextVolumeW(HANDLE h, WCHAR* out, u32 cap) { (void)h; (void)out; (void)cap; set_error(ERROR_NO_MORE_FILES); return FALSE; }
+static BOOL WINAPI FindVolumeClose(HANDLE h) { (void)h; return TRUE; }
+
+// look for a file along a search path (by default: the program's folder, the current folder, then PATH)
+static bool search_one(const char* dir, const char* file, const char* ext, char* found, usize cap) {
+    char cand[MAX_PATH * 2];
+    cand[0] = 0;
+    if (dir && *dir) {
+        slcpy(cand, dir, sizeof(cand));
+        usize n = slen(cand);
+        if (cand[n - 1] != '\\' && cand[n - 1] != '/') slcat(cand, "\\", sizeof(cand));
+    }
+    slcat(cand, file, sizeof(cand));
+    const char* base = srchr(file, '\\');
+    if (ext && !srchr(base ? base : file, '.')) slcat(cand, ext, sizeof(cand));
+    char sp[MAX_PATH];
+    si::Stat st;
+    if (!path_to_silicon(cand, sp, sizeof(sp)) || si::file_stat(sp, &st) != 0 || (st.flags & 1)) return false;
+    path_to_windows(sp, found, cap);
+    return true;
+}
+static bool search_path(const char* path, const char* file, const char* ext, char* found, usize cap) {
+    bool abs = file[0] == '\\' || file[0] == '/' || (file[0] && file[1] == ':');
+    if (abs) return search_one(nullptr, file, ext, found, cap);
+    if (path) {
+        char dir[MAX_PATH];
+        for (const char* p = path; *p;) {
+            usize n = 0;
+            while (p[n] && p[n] != ';') n++;
+            if (n && n < sizeof(dir)) { memcpy(dir, p, n); dir[n] = 0; if (search_one(dir, file, ext, found, cap)) return true; }
+            p += n + (p[n] == ';');
+        }
+        return false;
+    }
+    char exe_dir[MAX_PATH * 3];
+    utf8_from_wide(exe_module->wpath, -1, exe_dir, sizeof(exe_dir));
+    char* b = (char*)srchr(exe_dir, '\\');
+    if (b) *b = 0;
+    if (search_one(exe_dir, file, ext, found, cap) || search_one(".", file, ext, found, cap)) return true;
+    const WCHAR* pw = env_get(L"Path");
+    if (!pw) return false;
+    char envp[4096];
+    utf8_from_wide(pw, -1, envp, sizeof(envp));
+    return search_path(envp, file, ext, found, cap);
+}
+static u32 WINAPI SearchPathA(const char* path, const char* file, const char* ext, u32 cap, char* out, char** part) {
+    char found[MAX_PATH];
+    if (!file || !search_path(path, file, ext, found, sizeof(found))) { set_error(ERROR_FILE_NOT_FOUND); return 0; }
+    u32 r = put_a(found, out, cap);
+    if (part && out && r < cap) { char* b = (char*)srchr(out, '\\'); *part = b ? b + 1 : out; }
+    return r;
+}
+static u32 WINAPI SearchPathW(const WCHAR* path, const WCHAR* file, const WCHAR* ext, u32 cap, WCHAR* out, WCHAR** part) {
+    char p[4096], f[MAX_PATH * 3], e[32], found[MAX_PATH];
+    if (!file) { set_error(ERROR_INVALID_PARAMETER); return 0; }
+    if (path) utf8_from_wide(path, -1, p, sizeof(p));
+    utf8_from_wide(file, -1, f, sizeof(f));
+    if (ext) utf8_from_wide(ext, -1, e, sizeof(e));
+    if (!search_path(path ? p : nullptr, f, ext ? e : nullptr, found, sizeof(found))) { set_error(ERROR_FILE_NOT_FOUND); return 0; }
+    u32 r = put_w(found, out, cap);
+    if (part && out && r < cap) { WCHAR* last = out; for (WCHAR* q = out; *q; q++) if (*q == '\\') last = q + 1; *part = last; }
+    return r;
+}
+
+// GetFileInformationByHandleEx, for the classes programs ask for
+struct FILE_BASIC_INFO { i64 CreationTime, LastAccessTime, LastWriteTime, ChangeTime; u32 FileAttributes; };
+struct FILE_STANDARD_INFO { i64 AllocationSize, EndOfFile; u32 NumberOfLinks; u8 DeletePending, Directory; };
+struct FILE_ATTRIBUTE_TAG_INFO { u32 FileAttributes, ReparseTag; };
+struct FILE_ID_INFO { u64 VolumeSerialNumber; u8 FileId[16]; };
+static i64 ft64(FILETIME t) { return (i64)(((u64)t.dwHighDateTime << 32) | t.dwLowDateTime); }
+static BOOL WINAPI GetFileInformationByHandleEx(HANDLE h, int cls, void* out, u32 size) {
+    BY_HANDLE_FILE_INFORMATION i;
+    if (!GetFileInformationByHandle(h, &i)) return FALSE;
+    FileObj* f = (FileObj*)h_get(h, OBJ_FILE);
+    switch (cls) {
+    case 0: {                                                    // FileBasicInfo
+        if (size < sizeof(FILE_BASIC_INFO)) break;
+        FILE_BASIC_INFO* b = (FILE_BASIC_INFO*)out;
+        memset(b, 0, sizeof(*b));
+        b->CreationTime = ft64(i.ftCreationTime);
+        b->LastAccessTime = ft64(i.ftLastAccessTime);
+        b->LastWriteTime = b->ChangeTime = ft64(i.ftLastWriteTime);
+        b->FileAttributes = i.dwFileAttributes;
+        return TRUE;
+    }
+    case 1: {                                                    // FileStandardInfo
+        if (size < sizeof(FILE_STANDARD_INFO)) break;
+        FILE_STANDARD_INFO* s = (FILE_STANDARD_INFO*)out;
+        memset(s, 0, sizeof(*s));
+        s->EndOfFile = i.nFileSizeLow;
+        s->AllocationSize = (i.nFileSizeLow + 4095) & ~4095ll;
+        s->NumberOfLinks = 1;
+        s->Directory = f->fd == nullptr;
+        s->DeletePending = f->fd && f->fd->delete_on_close;
+        return TRUE;
+    }
+    case 2: {                                                    // FileNameInfo: the path without the drive
+        if (size < 8) break;
+        char w[MAX_PATH];
+        path_to_windows(f->fd ? f->fd->path : f->dirpath, w, sizeof(w));
+        const char* p = w[1] == ':' ? w + 2 : w;
+        WCHAR tmp[MAX_PATH];
+        int n = wide_from_utf8(p, -1, tmp, MAX_PATH) - 1;
+        *(u32*)out = (u32)n * 2;
+        if ((u32)n > (size - 4) / 2) { set_error(ERROR_MORE_DATA); return FALSE; }
+        memcpy((u8*)out + 4, tmp, (usize)n * 2);
+        return TRUE;
+    }
+    case 9: {                                                    // FileAttributeTagInfo
+        if (size < sizeof(FILE_ATTRIBUTE_TAG_INFO)) break;
+        FILE_ATTRIBUTE_TAG_INFO* t = (FILE_ATTRIBUTE_TAG_INFO*)out;
+        t->FileAttributes = i.dwFileAttributes;
+        t->ReparseTag = 0;
+        return TRUE;
+    }
+    case 18: {                                                   // FileIdInfo
+        if (size < sizeof(FILE_ID_INFO)) break;
+        FILE_ID_INFO* d = (FILE_ID_INFO*)out;
+        memset(d, 0, sizeof(*d));
+        d->VolumeSerialNumber = i.dwVolumeSerialNumber;
+        memcpy(d->FileId, &i.nFileIndexLow, 4);
+        return TRUE;
+    }
+    default:
+        set_error(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    set_error(ERROR_BAD_LENGTH);
+    return FALSE;
+}
+static BOOL WINAPI SetFileInformationByHandle(HANDLE h, int cls, void* in, u32 size) {
+    FileObj* f = (FileObj*)h_get(h, OBJ_FILE);
+    if (!f) return FALSE;
+    if (cls == 4 && size >= 1 && f->fd) { f->fd->delete_on_close = *(u8*)in != 0; return TRUE; }     // FileDispositionInfo
+    if (cls == 0) return TRUE;                                                                    // FileBasicInfo: times aren't kept
+    set_error(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
+// console input records. silicon's console hands over whole lines, so nothing is ever waiting to be peeked at,
+// and a blocking read gets one key-down event for each character typed
+struct INPUT_RECORD { u16 EventType; u16 pad; u8 Event[16]; };
+static BOOL WINAPI PeekConsoleInputW(HANDLE h, INPUT_RECORD* r, u32 n, u32* got) { (void)r; (void)n; if (!h_get(h, OBJ_CONSOLE)) return FALSE; *got = 0; return TRUE; }
+static BOOL WINAPI PeekConsoleInputA(HANDLE h, INPUT_RECORD* r, u32 n, u32* got) { return PeekConsoleInputW(h, r, n, got); }
+static BOOL WINAPI ReadConsoleInputW(HANDLE h, INPUT_RECORD* r, u32 n, u32* got) {
+    if (!h_get(h, OBJ_CONSOLE)) return FALSE;
+    *got = 0;
+    if (!n) return TRUE;
+    WCHAR c;
+    u32 k = 0;
+    if (!ReadConsoleW(h, &c, 1, &k, nullptr) || !k) return FALSE;
+    memset(r, 0, sizeof(*r));
+    r->EventType = 1;                                            // KEY_EVENT
+    u8* e = r->Event;
+    *(u32*)(e + 0) = 1;                                          // bKeyDown
+    *(u16*)(e + 4) = 1;                                          // wRepeatCount
+    *(u16*)(e + 6) = c == '\r' || c == '\n' ? 0x0D : 0;          // wVirtualKeyCode
+    *(u16*)(e + 10) = c == '\n' ? '\r' : c;                      // uChar
+    *got = 1;
+    return TRUE;
+}
+static BOOL WINAPI ReadConsoleInputA(HANDLE h, INPUT_RECORD* r, u32 n, u32* got) { return ReadConsoleInputW(h, r, n, got); }
+
 static const Export file_exports[] = {
     E(CreateFileA), E(CreateFileW), E(CreateFile2), E(ReadFile), E(WriteFile), E(SetFilePointer), E(SetFilePointerEx),
     E(GetFileSize), E(GetFileSizeEx), E(SetEndOfFile), E(FlushFileBuffers), E(CloseHandle), E(GetFileType),
@@ -1170,6 +1362,9 @@ static const Export file_exports[] = {
     E(FillConsoleOutputAttribute), E(GetConsoleCursorInfo), E(SetConsoleCursorInfo), E(SetConsoleCtrlHandler),
     E(GetConsoleWindow), E(AllocConsole), E(FreeConsole), E(AttachConsole), E(GetNumberOfConsoleInputEvents),
     E(FlushConsoleInputBuffer), E(GetConsoleScreenBufferInfoEx),
+    E(GetVolumeInformationA), E(GetVolumeInformationByHandleW), E(GetFinalPathNameByHandleA), E(FindFirstVolumeW),
+    E(FindNextVolumeW), E(FindVolumeClose), E(SearchPathA), E(SearchPathW), E(GetFileInformationByHandleEx),
+    E(SetFileInformationByHandle), E(PeekConsoleInputW), E(PeekConsoleInputA), E(ReadConsoleInputW), E(ReadConsoleInputA),
 };
 EXPORT_TABLE("kernel32.dll", file_exports);
 

@@ -816,6 +816,12 @@ static i64 CDECL c__spawnv(int m, const char* p, const char* const* a) { (void)m
 static i64 CDECL c__spawnvp(int m, const char* p, const char* const* a) { return c__spawnv(m, p, a); }
 static i64 CDECL c__execv(const char* p, const char* const* a) { return c__spawnv(0, p, a); }
 static i64 CDECL c__execvp(const char* p, const char* const* a) { return c__spawnv(0, p, a); }
+static i64 CDECL c__wspawnv(int m, const WCHAR* p, const WCHAR* const* a) { (void)m; (void)a; char u[MAX_PATH * 3]; utf8_from_wide(p, -1, u, sizeof(u)); return c__spawnv(m, u, nullptr); }
+static i64 CDECL c__wspawnvp(int m, const WCHAR* p, const WCHAR* const* a) { return c__wspawnv(m, p, a); }
+static i64 CDECL c__wspawnve(int m, const WCHAR* p, const WCHAR* const* a, const WCHAR* const* e) { (void)e; return c__wspawnv(m, p, a); }
+static i64 CDECL c__wspawnvpe(int m, const WCHAR* p, const WCHAR* const* a, const WCHAR* const* e) { (void)e; return c__wspawnv(m, p, a); }
+static i64 CDECL c__spawnve(int m, const char* p, const char* const* a, const char* const* e) { (void)e; return c__spawnv(m, p, a); }
+static i64 CDECL c__spawnvpe(int m, const char* p, const char* const* a, const char* const* e) { (void)e; return c__spawnv(m, p, a); }
 static i64 CDECL c__cwait(int* s, i64 h, int a) { (void)s; (void)h; (void)a; set_errno(ECHILD); return -1; }
 static void* CDECL c__popen(const char* c, const char* m) { (void)m; msg("_popen(\"%s\") is not supported", c); set_errno(ENOSYS); return nullptr; }
 static void* CDECL c__wpopen(const WCHAR* c, const WCHAR* m) { (void)c; (void)m; set_errno(ENOSYS); return nullptr; }
@@ -851,9 +857,9 @@ static const Export core_exports[] = {
     X(_fpreset), X(__fpe_flt_rounds), X(_set_FMA3_enable), X(_get_FMA3_enable), X(_set_output_format), X(_get_output_format),
     X(fegetround), X(fesetround), X(feclearexcept), X(fetestexcept), X(feraiseexcept), X(fegetenv), X(fesetenv), X(feholdexcept),
     X(feupdateenv), X(fegetexceptflag), X(fesetexceptflag),
-    EA("_setjmp", rt_setjmp), EA("_setjmpex", rt_setjmp), EA("setjmp", rt_setjmp), EA("longjmp", rt_longjmp),
+    EA("_setjmp", rt_setjmp), EA("_setjmpex", rt_setjmp), EA("__intrinsic_setjmp", rt_setjmp), EA("__intrinsic_setjmpex", rt_setjmp), EA("setjmp", rt_setjmp), EA("longjmp", rt_longjmp),
     X(_splitpath), X(_splitpath_s), X(_wsplitpath), X(_wsplitpath_s), X(_makepath), X(_makepath_s), X(_fullpath), X(_wfullpath),
-    X(system), X(_wsystem), X(_spawnv), X(_spawnvp), X(_execv), X(_execvp), X(_cwait), X(_popen), X(_wpopen), X(_pclose),
+    X(system), X(_wsystem), X(_spawnv), X(_spawnvp), X(_wspawnv), X(_wspawnvp), X(_wspawnve), X(_wspawnvpe), X(_spawnve), X(_spawnvpe), X(_execv), X(_execvp), X(_cwait), X(_popen), X(_wpopen), X(_pclose),
 };
 EXPORT_TABLE("ucrtbase.dll", core_exports);
 

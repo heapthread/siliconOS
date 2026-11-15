@@ -323,6 +323,64 @@ static HANDLE WINAPI FindResourceExA(HMODULE h, const char* type, const char* na
     WCHAR a[128], b[128];
     return FindResourceExW(h, res_wname(type, a), res_wname(name, b), lang);
 }
+// enumerating resources: the callbacks get names as integer ids or as strings (A or W)
+typedef BOOL (WINAPI *EnumTypeW)(HMODULE, WCHAR*, i64);
+typedef BOOL (WINAPI *EnumNameW)(HMODULE, const WCHAR*, WCHAR*, i64);
+typedef BOOL (WINAPI *EnumLangW)(HMODULE, const WCHAR*, const WCHAR*, u16, i64);
+static ResDir* res_subdir(u8* root, ResDir* dir, const WCHAR* name) {
+    ResEntry* e = res_find(root, dir, name);
+    return e && (e->OffsetToData >> 31) ? (ResDir*)(root + (e->OffsetToData & 0x7FFFFFFF)) : nullptr;
+}
+// an entry's name as the callbacks get it: an id, or a string in buf (UTF-16, or UTF-8 when ansi)
+static void* res_entry_name(u8* root, ResEntry* e, void* buf, bool ansi) {
+    if (!(e->Name >> 31)) return (void*)(u64)(e->Name & 0xFFFF);
+    u16* s = (u16*)(root + (e->Name & 0x7FFFFFFF));
+    u32 len = s[0] < 255 ? s[0] : 255;
+    WCHAR w[256];
+    memcpy(w, s + 1, len * 2);
+    w[len] = 0;
+    if (ansi) utf8_from_wide(w, -1, (char*)buf, 512);
+    else memcpy(buf, w, (len + 1) * 2);
+    return buf;
+}
+static BOOL res_enum(HMODULE h, const WCHAR* type, const WCHAR* name, int level, void* fn, i64 param, bool ansi, const void* atype, const void* aname) {
+    Module* m = mod_of_handle(h);
+    if (!m) { set_error(ERROR_INVALID_HANDLE); return FALSE; }
+    u8* root = m->builtin ? nullptr : (u8*)image_dir(m, DIR_RESOURCE, nullptr);
+    if (!root) { set_error(ERROR_RESOURCE_DATA_NOT_FOUND); return FALSE; }
+    ResDir* dir = (ResDir*)root;
+    if (level >= 1 && !(dir = res_subdir(root, dir, type))) { set_error(ERROR_RESOURCE_TYPE_NOT_FOUND); return FALSE; }
+    if (level >= 2 && !(dir = res_subdir(root, dir, name))) { set_error(ERROR_RESOURCE_NAME_NOT_FOUND); return FALSE; }
+    ResEntry* e = (ResEntry*)(dir + 1);
+    u32 n = (u32)dir->NumberOfNamedEntries + dir->NumberOfIdEntries;
+    for (u32 i = 0; i < n; i++) {
+        char buf[512];
+        BOOL more;
+        if (level == 0) more = ((EnumTypeW)fn)(h, (WCHAR*)res_entry_name(root, &e[i], buf, ansi), param);
+        else if (level == 1) more = ((EnumNameW)fn)(h, (const WCHAR*)atype, (WCHAR*)res_entry_name(root, &e[i], buf, ansi), param);
+        else more = ((EnumLangW)fn)(h, (const WCHAR*)atype, (const WCHAR*)aname, (u16)e[i].Name, param);
+        if (!more) break;
+    }
+    return TRUE;
+}
+static BOOL WINAPI EnumResourceTypesW(HMODULE h, void* fn, i64 p) { return res_enum(h, nullptr, nullptr, 0, fn, p, false, nullptr, nullptr); }
+static BOOL WINAPI EnumResourceTypesA(HMODULE h, void* fn, i64 p) { return res_enum(h, nullptr, nullptr, 0, fn, p, true, nullptr, nullptr); }
+static BOOL WINAPI EnumResourceNamesW(HMODULE h, const WCHAR* type, void* fn, i64 p) { return res_enum(h, type, nullptr, 1, fn, p, false, type, nullptr); }
+static BOOL WINAPI EnumResourceNamesA(HMODULE h, const char* type, void* fn, i64 p) {
+    WCHAR a[128];
+    return res_enum(h, res_wname(type, a), nullptr, 1, fn, p, true, type, nullptr);
+}
+static BOOL WINAPI EnumResourceLanguagesW(HMODULE h, const WCHAR* type, const WCHAR* name, void* fn, i64 p) {
+    return res_enum(h, type, name, 2, fn, p, false, type, name);
+}
+static BOOL WINAPI EnumResourceLanguagesA(HMODULE h, const char* type, const char* name, void* fn, i64 p) {
+    WCHAR a[128], b[128];
+    return res_enum(h, res_wname(type, a), res_wname(name, b), 2, fn, p, true, type, name);
+}
+static BOOL WINAPI EnumResourceLanguagesExW(HMODULE h, const WCHAR* type, const WCHAR* name, void* fn, i64 p, u32 f, u16 lang) {
+    (void)f; (void)lang;
+    return EnumResourceLanguagesW(h, type, name, fn, p);
+}
 static HANDLE WINAPI LoadResource(HMODULE h, HANDLE r) {
     Module* m = mod_of_handle(h);
     if (!m || !r) return nullptr;
@@ -779,6 +837,8 @@ static const Export proc_exports[] = {
     E(LoadLibraryA), E(LoadLibraryW), E(LoadLibraryExA), E(LoadLibraryExW), E(FreeLibrary), E(FreeLibraryAndExitThread),
     E(DisableThreadLibraryCalls), E(SetDllDirectoryA), E(SetDllDirectoryW), E(AddDllDirectory), E(RemoveDllDirectory),
     E(SetDefaultDllDirectories), E(GetProcAddress), E(FindResourceA), E(FindResourceW), E(FindResourceExA), E(FindResourceExW),
+    E(EnumResourceTypesW), E(EnumResourceTypesA), E(EnumResourceNamesW), E(EnumResourceNamesA), E(EnumResourceLanguagesW),
+    E(EnumResourceLanguagesA), E(EnumResourceLanguagesExW),
     E(LoadResource), E(LockResource), E(FreeResource), E(SizeofResource),
     E(ExitProcess), E(TerminateProcess), E(FatalExit), E(FatalAppExitA), E(FatalAppExitW), E(GetCurrentProcess), E(GetCurrentProcessId),
     E(GetProcessId), E(GetExitCodeProcess), E(OpenProcess), E(GetCommandLineA), E(GetCommandLineW), E(CreateProcessA), E(CreateProcessW),
