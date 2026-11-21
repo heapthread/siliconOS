@@ -257,6 +257,7 @@ void process_exit(u32 code) {
 
 // ---------------------------------------------------------------- start-up
 void env_init(const char* exe_path, const WCHAR* cmdline) {
+    { si::Stat st; if (si::file_stat("/home/tmp", &st) != 0) si::make_dir("/home/tmp"); }    // TEMP and TMP point there
     peb = (PEB*)sysalloc(0x1000);
     peb->OSMajorVersion = 10;
     peb->OSMinorVersion = 0;

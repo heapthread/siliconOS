@@ -149,6 +149,35 @@ python sdk/build_app.py sdk/examples/hello/main.cpp -o hello.sapp
 
 Copy the `.sapp` into silicon (`wget` it, or put it on the disk image) and open it from Files or with `open hello.sapp`. The example is also built into the kernel and installed as `/home/apps/hello.sapp`. Modules run in the kernel's address space and can crash the system or read anything, so only run modules you trust; real processes and memory protection are still to do.
 
+## Running Windows programs (win32run)
+
+`win32run` runs unmodified 64-bit Windows `.exe` files (PE32+, x86_64) as silicon user programs in ring 3. It loads the exe and any DLLs next to it, sets up a TEB and PEB, and supplies its own versions of kernel32, ntdll, msvcrt/ucrtbase, user32, gdi32, advapi32, shell32 and a few smaller DLLs. Console programs print to the terminal, and GUI programs get real silicon windows.
+
+**Getting an exe into silicon**
+
+- Put it on a USB stick. `tools/mkexeusb.py` builds a FAT32 image from files or folders, and silicon mounts it at `/mnt/WIN32`:
+
+  ```bash
+  python tools/mkexeusb.py stick.img myprog.exe somelib.dll
+  SILICON_USB_IMG=stick.img python build.py run
+  ```
+
+- Or put it anywhere in the filesystem (`wget` it into `/home`, for example). The test programs in `tests/win32/` are built into the image and installed in `/home/win32`.
+
+**Running it**
+
+```
+win32run /mnt/WIN32/myprog.exe arg1 "arg two"
+```
+
+You can also type the exe's name like any command (`./myprog.exe`), or double-click it in Files. Paths appear to the program as `C:\...`, so `/home/a.txt` is `C:\home\a.txt`. Options: `--trace` logs what the loader and exception code do, and `--strict` stops at the first unimplemented API.
+
+**When something is missing.** An API that win32run doesn't have yet prints a line like `[WIN32 UNIMPLEMENTED] kernel32.dll!SomeFunction (called from myprog.exe+0x1234)` and returns 0 with `ERROR_CALL_NOT_IMPLEMENTED`, so the program can usually carry on. Add the function to the matching file in `sdk/win32/` (each file ends with an `EXPORT_TABLE`), then rebuild.
+
+**Tested so far:** the test programs in `tests/win32/` (a console app with 103 checks and a GDI app), plus the unmodified MinGW tools NASM 3.01, objdump (which loads its bundled `libwinpthread-1.dll`), readelf, size and c++filt.
+
+**Not supported yet:** starting other processes (`CreateProcess`, so `make` can't run its recipes), networking (ws2_32), COM, DirectX, 32-bit exes, and named objects shared between processes.
+
 ## Shells
 
 The terminal speaks three dialects. Switch with `bash`, `zsh` or `fish` (and `exit` to go back), or
